@@ -8,7 +8,10 @@
 
 HDR 也已包含并默认启用：启动器会设置原神的 HDR 开关，包内带有 RenoDX 和 HDR shader。要看到真实 HDR 输出，还需要在 Windows 和显示器上开启 HDR；ReShade shader 只是随包提供，不会自动启用每一个效果。
 
-完整文件夹包（含大模型）：[Google Drive 文件夹](https://drive.google.com/drive/folders/1VH2Vg4oAvD_12HBBRnA4xcjmpQUANo50?usp=sharing)
+完整文件夹包（含大模型）：
+
+- [Google Drive 文件夹](https://drive.google.com/drive/folders/1VH2Vg4oAvD_12HBBRnA4xcjmpQUANo50?usp=sharing)
+- [百度网盘：GI.7z](https://pan.baidu.com/s/1T9EqgpNZ2kmBWLzr1P4ETQ)，提取码：`ysqd`
 
 ## 工作原理
 
