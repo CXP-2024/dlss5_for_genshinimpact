@@ -2,7 +2,7 @@
 
 1. 将整个文件夹放在任意英文路径。
 2. 只双击“启动_DLSS5.bat”。
-3. 第一次输入 YuanShen.exe 路径，之后再次双击即可。
+3. 第一次在文件选择框中选择 YuanShen.exe，之后再次双击即可。
 
 不要打开 payload\\_internal 里的文件。
 
