@@ -1,5 +1,7 @@
 # 安装与启动
 
+> 普通用户请直接使用根目录 README 中的完整 ZIP 和 `启动_DLSS5.bat`。本文只用于手动部署、排错或重新构建，不要与一键包混用。
+
 ## 目录原则
 
 建议把本仓库克隆到一个固定目录，例如 `D:\GenshinDLSS5Tutorial`。游戏目录只放 ReShade 的 `dxgi.dll`、ReShade 配置及其 Add-ons；教程仓库本身不需要放进游戏目录。
