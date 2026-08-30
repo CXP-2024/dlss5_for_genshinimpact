@@ -4,7 +4,8 @@ param(
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
-$root = [IO.Path]::GetFullPath((Split-Path -Parent $PSCommandPath))
+$scriptDir = Split-Path -Parent $PSCommandPath
+$root = [IO.Path]::GetFullPath((Join-Path $scriptDir '..\..'))
 $payload = Join-Path $root 'payload'
 $fpsConfigPath = Join-Path $root 'fps_config.json'
 $unlockerPath = Join-Path $root 'unlockfps_nc.exe'
@@ -34,14 +35,30 @@ function Read-SavedGamePath {
     } catch { return $null }
 }
 
+function Browse-GameExe {
+    try {
+        Add-Type -AssemblyName System.Windows.Forms
+        $dialog = New-Object System.Windows.Forms.OpenFileDialog
+        $dialog.Title = 'Select YuanShen.exe or GenshinImpact.exe'
+        $dialog.Filter = 'Genshin Impact|YuanShen.exe;GenshinImpact.exe|Executable files|*.exe'
+        $dialog.CheckFileExists = $true
+        $dialog.Multiselect = $false
+        if ($dialog.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {
+            return Resolve-GameExe -InputPath $dialog.FileName
+        }
+    } catch { }
+    return $null
+}
+
 function Select-GameExe {
     param([string]$InitialPath)
     $candidate = Resolve-GameExe -InputPath $InitialPath
+    if ($null -eq $candidate) { $candidate = Browse-GameExe }
     while ($null -eq $candidate) {
         Write-Host ''
-        Write-Host '请输入原神游戏目录或 YuanShen.exe 完整路径：' -ForegroundColor Cyan
-        $candidate = Resolve-GameExe -InputPath (Read-Host '路径')
-        if ($null -eq $candidate) { Write-Host '路径无效，请重试。' -ForegroundColor Red }
+        Write-Host 'Enter the game folder or the full path to YuanShen.exe:' -ForegroundColor Cyan
+        $candidate = Resolve-GameExe -InputPath (Read-Host 'Path')
+        if ($null -eq $candidate) { Write-Host 'Invalid path. Try again.' -ForegroundColor Red }
     }
     return $candidate
 }
@@ -93,10 +110,9 @@ $optiIni = Join-Path $payload 'OptiScaler\OptiScaler.ini'
 $reshadeIni = Join-Path $gameDir 'ReShade.ini'
 
 foreach ($required in @($unlockerPath, $reshade, $bridge, $opti, (Join-Path $addons 'dlss5-dx11-bridge.addon64'), (Join-Path $addons 'renodx-dlss5.addon64'), (Join-Path $addons 'nvngx_dlssnr.dll'), (Join-Path $payload 'OptiScaler\nvngx_dlss.dll'))) {
-    if (-not (Test-Path -LiteralPath $required -PathType Leaf)) { throw "缺少文件：$required" }
+    if (-not (Test-Path -LiteralPath $required -PathType Leaf)) { throw "Missing file: $required" }
 }
 
-# Keep a one-time backup of the old game-side ReShade settings, then point all paths here.
 if (Test-Path -LiteralPath $reshadeIni -PathType Leaf) {
     $backup = "$reshadeIni.dlss5-backup"
     if (-not (Test-Path -LiteralPath $backup -PathType Leaf)) { Copy-Item -LiteralPath $reshadeIni -Destination $backup }
@@ -105,7 +121,7 @@ Set-IniValue -Path $reshadeIni -Section 'ADDON' -Key 'AddonPath' -Value ([IO.Pat
 Set-IniValue -Path $reshadeIni -Section 'GENERAL' -Key 'EffectSearchPaths' -Value ([IO.Path]::GetFullPath($shaders))
 Set-IniValue -Path $reshadeIni -Section 'GENERAL' -Key 'TextureSearchPaths' -Value ([IO.Path]::GetFullPath($textures))
 
-if (-not (Test-Path -LiteralPath $optiIni -PathType Leaf)) { throw "缺少 OptiScaler.ini：$optiIni" }
+if (-not (Test-Path -LiteralPath $optiIni -PathType Leaf)) { throw "Missing OptiScaler.ini: $optiIni" }
 Set-IniValue -Path $optiIni -Section 'Libraries' -Key 'OptiDllPath' -Value ([IO.Path]::GetFullPath((Join-Path $payload 'OptiScaler')))
 
 $config = [ordered]@{
@@ -131,5 +147,5 @@ $config = [ordered]@{
     DllList = @($reshade, $bridge, $opti)
 }
 $config | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $fpsConfigPath -Encoding UTF8
-Write-Host "配置完成：$gameExe" -ForegroundColor Green
+Write-Host "Configuration complete: $gameExe" -ForegroundColor Green
 Start-Process -FilePath $unlockerPath -WorkingDirectory $root

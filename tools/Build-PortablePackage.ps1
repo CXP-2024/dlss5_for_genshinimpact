@@ -49,8 +49,8 @@ if (Test-Path -LiteralPath $zip) { Remove-Item -LiteralPath $zip -Force }
 New-Item -ItemType Directory -Force -Path $staging | Out-Null
 
 Copy-File (Join-Path $repo 'release\portable-template\启动_DLSS5.bat') '启动_DLSS5.bat'
-Copy-File (Join-Path $repo 'release\portable-template\配置并启动.ps1') '配置并启动.ps1'
 Copy-File (Join-Path $repo 'release\portable-template\README.txt') 'README.txt'
+Copy-File (Join-Path $repo 'release\portable-template\configure_and_start.ps1') 'payload\_internal\configure_and_start.ps1'
 Copy-File (Join-Path $runtime 'unlockfps_nc.exe') 'unlockfps_nc.exe'
 Copy-File (Join-Path $runtime 'UnlockerStub.dll') 'UnlockerStub.dll'
 
