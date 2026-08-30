@@ -12,6 +12,7 @@ HDR 也已包含并默认启用：启动器会设置原神的 HDR 开关，包�
 
 - [Google Drive 文件夹](https://drive.google.com/drive/folders/1VH2Vg4oAvD_12HBBRnA4xcjmpQUANo50?usp=sharing)（不限速）
 - [百度网盘：GI.7z](https://pan.baidu.com/s/1T9EqgpNZ2kmBWLzr1P4ETQ)（国内访问方便，建议使用 SVIP 下载），提取码：`ysqd`，7z 解压密码：`yuanshenqidong`
+- [Google Drive：ZIP 可选版本](https://drive.google.com/file/d/107-ocF8ux_lF6y30WTnTsjTTBQtftahd/view?usp=sharing)（不限速，解压密码：`yuanshenqidong`）
 
 ## 工作原理
 
