@@ -1,0 +1,12 @@
+This repository is an integration/tutorial project. It includes source snapshots and
+small binaries for the listed open-source projects. See each source directory for
+the original license and upstream URL.
+
+The repository does not redistribute NVIDIA DLSS model/runtime DLLs, ReShade runtime
+binaries, OptiScaler binaries, or the RenoDX DLSS5 add-on. Obtain those components
+from their respective authors or official distribution channels.
+
+Upstream projects:
+- https://github.com/NIGos/dlss5-dx11-bridge (MIT)
+- https://github.com/AizawaHikaru233/genshin_fsr_brigde (GPL-3.0)
+- https://github.com/34736384/genshin-fps-unlock (MIT)

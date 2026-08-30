@@ -1,0 +1,9 @@
+{
+  "GamePath": "<游戏目录>\\YuanShen.exe",
+  "DllPaths": [
+    "<本教程目录>\\release\\configs\\Dx11FsrBridge.dll",
+    "<OptiScaler目录>\\OptiScaler.dll"
+  ],
+  "AddonsPath": "<ReShade目录>\\reshade-shaders\\Addons",
+  "注释": "这是模板，不要原样使用；请替换尖括号中的路径，并确认没有旧 H 盘路径。"
+}

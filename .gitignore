@@ -1,0 +1,25 @@
+# User-specific runtime state and diagnostics
+*.log
+*.log.*
+*.bak
+.installer-state.json
+fps_config.json
+ReShade.ini
+ReShadePreset.ini
+
+# Build output
+bin/
+obj/
+build/
+dist/
+out/
+*.pdb
+
+# Large/proprietary runtime components (download separately)
+nvngx_dlss.dll
+nvngx_dlssnr.dll
+libxess.dll
+ReShade64.dll
+OptiScaler.dll
+*.7z
+*.zip

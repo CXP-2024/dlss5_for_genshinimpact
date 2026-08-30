@@ -1,0 +1,61 @@
+name: Build Lite Package
+
+on:
+  workflow_dispatch:
+    inputs:
+      publish_release:
+        description: Publish the generated Lite ZIP to GitHub Releases
+        required: true
+        default: false
+        type: boolean
+      release_tag:
+        description: Release tag to create or update when publishing (for example v1.0.9)
+        required: false
+        type: string
+      release_notes:
+        description: Release notes body (Markdown). Used as-is when publishing.
+        required: false
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Initialize MSVC environment
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      - name: Build FPS Unlock Lite package
+        shell: pwsh
+        run: ./Build-OnlineInstaller.ps1 -Configuration Release -GithubLiteOnly
+
+      - name: Upload FPS Unlock Lite package
+        uses: actions/upload-artifact@v4
+        with:
+          name: GenshinFSRBridge-Lite-Packages
+          path: |
+            dist/原神解帧FSR插件包Lite_*.zip
+          if-no-files-found: error
+
+      - name: Validate release tag
+        if: inputs.publish_release && inputs.release_tag == ''
+        shell: pwsh
+        run: throw '发布到 Release 时必须填写 release_tag。'
+
+      - name: Publish release
+        if: inputs.publish_release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ inputs.release_tag }}
+          target_commitish: ${{ github.sha }}
+          generate_release_notes: false
+          body: ${{ inputs.release_notes }}
+          files: |
+            dist/github-release/GenshinFSRBridge.Lite_v*.zip
