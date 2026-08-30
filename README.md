@@ -21,7 +21,7 @@ HDR 也已包含并默认启用：启动器会设置原神的 HDR 开关，包�
 1. 检查是否插件被windows拦截了，具体按在win键，搜索安全，进入到windows安全中心，找到如下页面是否把UnlockerStub.dll给拦截了，需要允许其使用这个程序
 ![alt text](docs/images/fix_stub.dll.png)
 2. 检查驱动是否为新版，目前已验证版本610.88可以正常启动使用
-3. 不要开启nvidai app里面的插帧功能，且原神的抗锯齿使用FSR2, 因为我们通过这个接口转成DLSS算法抗锯齿。
+3. 不要开启nvidai app里面的插帧功能，且原神的抗锯齿使用FSR2, 因为我们通过这个接口转成DLSS算法抗锯齿。进入游戏后可以试着调一下渲染倍率，其中倍率0.999相当于DLAA。
 ![](docs/images/nv.jpg)
 
 ## DLSS5刚进入时可能会有屏幕闪烁
