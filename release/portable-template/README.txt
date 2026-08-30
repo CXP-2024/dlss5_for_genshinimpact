@@ -7,3 +7,5 @@
 不要打开 payload\\_internal 里的文件。
 
 脚本会自动修复所有插件路径并通过 FPS Unlocker 启动游戏。不要直接启动游戏 exe，也不需要改名 dxgi.dll 或 d3d12.dll。
+
+本包默认启用 HDR；请同时在 Windows 和显示器设置中开启 HDR。
