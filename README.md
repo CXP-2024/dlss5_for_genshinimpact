@@ -16,6 +16,14 @@ HDR 也已包含并默认启用：启动器会设置原神的 HDR 开关，包�
 
 如果解压后缺少 `UnlockerStub.dll`，请从 [GitHub 单独下载](https://github.com/CXP-2024/dlss5_for_genshinimpact/raw/refs/heads/main/release/fps-unlocker/UnlockerStub.dll)，放到解压包根目录，与 `启动_DLSS5.bat`、`unlockfps_nc.exe` 同级。只需补放这个文件，不要改名。
 
+## 启动时未成功加载DLSS5可能原因
+
+1. 检查是否插件被windows拦截了，具体按在win键，搜索安全，进入到windows安全中心，找到如下页面是否把UnlockerStub.dll给拦截了，需要允许其使用这个程序
+![alt text](image.png)
+2. 检查驱动是否为新版
+
+
+
 ## 解压后的目录
 
 解压完成后，根目录应类似下图：
