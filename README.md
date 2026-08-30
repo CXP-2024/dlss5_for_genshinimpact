@@ -14,6 +14,14 @@ HDR 也已包含并默认启用：启动器会设置原神的 HDR 开关，包�
 - [百度网盘：GI.7z](https://pan.baidu.com/s/1T9EqgpNZ2kmBWLzr1P4ETQ)（国内访问方便，建议使用 SVIP 下载），提取码：`ysqd`，7z 解压密码：`yuanshenqidong`
 - [Google Drive：ZIP 可选版本](https://drive.google.com/file/d/107-ocF8ux_lF6y30WTnTsjTTBQtftahd/view?usp=sharing)（不限速，解压密码：`yuanshenqidong`）
 
+如果解压后缺少 `UnlockerStub.dll`，请从 [GitHub 单独下载](https://github.com/CXP-2024/dlss5_for_genshinimpact/raw/refs/heads/main/release/fps-unlocker/UnlockerStub.dll)，放到解压包根目录，与 `启动_DLSS5.bat`、`unlockfps_nc.exe` 同级。只需补放这个文件，不要改名。
+
+## 解压后的目录
+
+解压完成后，根目录应类似下图：
+
+![解压后的文件结构](docs/images/dlss5-package-layout.png)
+
 ## 工作原理
 
 原神本身是 DX11，DLSS5 插件需要 DX12 的 NGX 调用。启动器按固定顺序注入 ReShade、`Dx11FsrBridge.dll` 和 `OptiScaler.dll`：
