@@ -22,6 +22,11 @@ HDR 也已包含并默认启用：启动器会设置原神的 HDR 开关，包�
 ![alt text](docs/images/fix_stub.dll.png)
 2. 检查驱动是否为新版
 
+## DLSS5刚进入时可能会有屏幕闪烁
+
+这是正常的，大概率是参数没有调好，可以自行配一下
+![alt text](docs/images/canshu.jpg)
+
 
 
 ## 解压后的目录
