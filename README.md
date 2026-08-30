@@ -19,7 +19,7 @@ HDR 也已包含并默认启用：启动器会设置原神的 HDR 开关，包�
 ## 启动时未成功加载DLSS5可能原因
 
 1. 检查是否插件被windows拦截了，具体按在win键，搜索安全，进入到windows安全中心，找到如下页面是否把UnlockerStub.dll给拦截了，需要允许其使用这个程序
-![alt text](image.png)
+![alt text](docs/images/fix_stub.dll.png)
 2. 检查驱动是否为新版
 
 
