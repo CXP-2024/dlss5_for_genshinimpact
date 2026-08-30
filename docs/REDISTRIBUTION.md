@@ -11,6 +11,6 @@
 | `OptiScaler.dll` | 第三方项目发行文件，建议从其 release 获取 | 约 25 MiB |
 | `renodx-dlss5.addon64` | 未确认本项目具有再分发授权 | 约 0.37 MiB |
 
-用户提供的 Google Drive 链接只用于 `nvngx_dlssnr.dll`。`nvngx_dlss.dll` 也超过 GitHub 常规 50 MiB 限制，需要另一个合法下载来源或单独的云盘链接；不要把它提交到 Git 历史。
+`tools/Build-PortablePackage.ps1` 会从本机已取得的文件生成一个独立 ZIP，供维护者自行上传到 Google Drive。这个 ZIP 不属于 GitHub 仓库，且包含受限运行时；上传前请确认每个组件的再分发权限。不要把它或其中的大文件提交到 Git 历史。
 
 源码目录保留各上游项目的许可证和 NOTICE。发布前请再次核对上游许可证、作者授权和下载来源。
