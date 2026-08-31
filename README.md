@@ -17,6 +17,15 @@ HDR 也已包含并默认启用：启动器会设置原神的 HDR 开关，包�
 
 百度网盘提取码：`y95x`；7z 解压密码：`yuanshenqidong`。
 
+### 旧版本：v1.0
+
+如需兼容旧配置，可使用 v1.0。普通用户建议优先使用上面的 v1.1。
+
+- [Google Drive 文件夹（v1.0）](https://drive.google.com/drive/folders/1VH2Vg4oAvD_12HBBRnA4xcjmpQUANo50?usp=sharing)
+- [百度网盘：GI.7z（v1.0）](https://pan.baidu.com/s/1T9EqgpNZ2kmBWLzr1P4ETQ?pwd=ysqd)（建议使用 SVIP 下载）
+
+百度网盘提取码：`ysqd`；7z 解压密码：`yuanshenqidong`。
+
 如果解压后缺少 `UnlockerStub.dll`，请从 [GitHub 单独下载](https://github.com/CXP-2024/dlss5_for_genshinimpact/raw/refs/heads/main/release/fps-unlocker/UnlockerStub.dll)，放到解压包根目录，与 `启动_DLSS5.bat`、`unlockfps_nc.exe` 同级。只需补放这个文件，不要改名。
 
 ## 启动时未成功加载DLSS5可能原因
