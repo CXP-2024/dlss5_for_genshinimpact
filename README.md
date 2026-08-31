@@ -7,6 +7,7 @@
 - [旧版本 v1.0](#旧版本v10)
 - [启动失败排查](#启动时未成功加载dlss5可能原因)
 - [屏幕闪烁说明](#dlss5刚进入时可能会有屏幕闪烁)
+- [调参示例](#调参示例源于b站up主ZHFred)
 - [解压后的目录](#解压后的目录)
 - [工作原理](#工作原理)
 - [引用的开源项目](#引用的开源项目)
@@ -21,7 +22,7 @@ HDR 也已包含并默认启用：启动器会设置原神的 HDR 开关，包�
 
 ## 最新版本：v1.1
 
-推荐下载 v1.1：已修复此前 RenoDX DLSS5 插件的显存泄漏问题，并更新 DLSS5/NR 模型组件。
+推荐下载 v1.1：已修复此前 RenoDX DLSS5 插件的显存泄漏问题，并更新 DLSS5/NR 模型组件。支持50系显卡。
 
 - [Google Drive 下载](https://drive.google.com/file/d/17LIscmrEGhJrlWnOdZNlRBFJotdHaOLf/view?usp=sharing)（不限速）
 - [百度网盘下载](https://pan.baidu.com/s/1tlxdX8iLNN9gCvEd5j2soQ?pwd=y95x)（国内访问方便，建议使用 SVIP 下载）
@@ -69,7 +70,9 @@ DLSS5_GI_Ready\payload\ReShade\reshade-shaders\Addons\nvngx_dlssnr.dll
 这是正常的，大概率是参数没有调好，可以自行配一下
 ![alt text](docs/images/canshu.jpg)
 
-
+## 调参示例源于b站up主ZHFred
+![](docs/images/example.jpg)
+![](docs/images/dlss5exp.png)
 
 ## 解压后的目录
 
