@@ -17,6 +17,21 @@ HDR 也已包含并默认启用：启动器会设置原神的 HDR 开关，包�
 
 百度网盘提取码：`y95x`；7z 解压密码：`yuanshenqidong`。
 
+### RTX 40 系列专用 DLSS NR 模型
+
+如果显卡是 RTX 40 系列，请额外下载 RHI 提供的 RTX40 专用 `nvngx_dlssnr.dll`，不要直接使用完整包内的默认 NR 模型：
+
+- [Google Drive 下载](https://drive.google.com/file/d/1Ztmm0oSlFRQfNvbNN8aav11w-WriCWCA/view?usp=sharing)
+- [百度网盘下载](https://pan.baidu.com/s/176qWSQ4eiyXjtHdyQb_iCw?pwd=jhfk)（提取码：`jhfk`）
+
+解压后，用其中的 `nvngx_dlssnr.dll` 替换：
+
+```text
+DLSS5_GI_Ready\payload\ReShade\reshade-shaders\Addons\nvngx_dlssnr.dll
+```
+
+只替换这个文件，`nvngx_dlss.dll`、桥接插件和 RenoDX 插件保持不变。
+
 ### 旧版本：v1.0
 
 如需兼容旧配置，可使用 v1.0。普通用户建议优先使用上面的 v1.1。
