@@ -8,11 +8,14 @@
 
 HDR 也已包含并默认启用：启动器会设置原神的 HDR 开关，包内带有 RenoDX 和 HDR shader。要看到真实 HDR 输出，还需要在 Windows 和显示器上开启 HDR；ReShade shader 只是随包提供，不会自动启用每一个效果。
 
-完整文件夹包（含大模型）：
+## 最新版本：v1.1
 
-- [Google Drive 文件夹](https://drive.google.com/drive/folders/1VH2Vg4oAvD_12HBBRnA4xcjmpQUANo50?usp=sharing)（不限速）
-- [百度网盘：GI.7z](https://pan.baidu.com/s/1T9EqgpNZ2kmBWLzr1P4ETQ)（国内访问方便，建议使用 SVIP 下载），提取码：`ysqd`，7z 解压密码：`yuanshenqidong`
-- [Google Drive：ZIP 可选版本](https://drive.google.com/file/d/107-ocF8ux_lF6y30WTnTsjTTBQtftahd/view?usp=sharing)（不限速，解压密码：`yuanshenqidong`）
+推荐下载 v1.1：已修复此前 RenoDX DLSS5 插件的显存泄漏问题，并更新 DLSS5/NR 模型组件。
+
+- [Google Drive 下载](https://drive.google.com/file/d/17LIscmrEGhJrlWnOdZNlRBFJotdHaOLf/view?usp=sharing)（不限速）
+- [百度网盘下载](https://pan.baidu.com/s/1tlxdX8iLNN9gCvEd5j2soQ?pwd=y95x)（国内访问方便，建议使用 SVIP 下载）
+
+百度网盘提取码：`y95x`；7z 解压密码：`yuanshenqidong`。
 
 如果解压后缺少 `UnlockerStub.dll`，请从 [GitHub 单独下载](https://github.com/CXP-2024/dlss5_for_genshinimpact/raw/refs/heads/main/release/fps-unlocker/UnlockerStub.dll)，放到解压包根目录，与 `启动_DLSS5.bat`、`unlockfps_nc.exe` 同级。只需补放这个文件，不要改名。
 
