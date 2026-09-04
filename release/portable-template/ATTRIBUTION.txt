@@ -12,15 +12,34 @@ nr-before-sr.zh-CN.addon64 与 nrchain_nvngx.dll 来自用户提供的压缩包�
 也不主张其源码或著作权。
 
 本项目对该部分仅做了以下集成修改：
-- 将 nr_before_sr.ini 的默认 Mode 从 1 改为 2，使顺序由“先超分后 NR”改为
-  “低分辨率 NR -> 原 DLSS 超分”；
+- 将 nr_before_sr.ini 的初始默认值从 Mode 1 改为 Mode 2，同时保留两种模式，
+  并让启动器保留玩家在插件界面保存的选择；
 - 调整 ReShade Add-on 的早期加载、OptiScaler 配置、启动顺序和一键脚本；
 - 使用带 DLSS-on-DX12/pre-NR 兼容修复的 OptiScaler 构建；
-- 在无 GIMI 的 dlss_12 路径延迟原生 D3D11 NGX 初始化，改用 OptiScaler 自有
-  参数表把 D3D12 颜色、深度、运动向量和输出资源交给前置 NR 与原 DLSS；
+- 在无 GIMI 的 dlss_12 路径按 RTX 30/40 驱动要求初始化原生 D3D11 NGX，
+  并使用原生 D3D12 NGX 参数对象完成桥接交接；
+- 增加 queue-affinity 标记、typed/untyped D3D12 资源交接，以及 FP16 输出载体
+  与回写，使 NR-before-SR 和输出分辨率 NR-after-SR 都能处理原神 typeless 输出；
 - 创建私有 DLSS-on-DX12 设备时临时绕过 ReShade 的 D3D12CreateDevice hook，
   并解包 ReShade adapter proxy；只修改游戏进程内 hook，不修改系统 DLL；
 - 禁用 OptiScaler 内置后置 NR，避免同一帧重复执行 Neural Rendering。
+
+RTX 30 兼容贡献
+----------------
+
+RTX 30 Profile、OptiScaler 增量修改和兼容说明来自用户提供的
+“DLSS5_GI_Ready_v1.2_PreNR_fixRTX30.zip”，其文档署名“华晓熊”；文档记录
+RTX 3090 / NVIDIA 581.57 验证。本项目在纳入前独立比较了源码差异并重新构建。
+
+随后在国服 YuanShen/RTX 5080 运行验证中发现剩余边界：外部补丁只在
+R8G8B8A8_TYPELESS 时启用 FP16 输出载体，而实机输出是 R10G10B10A2_UNORM
+（格式 24），所以插件会拒绝 Mode 1 并保留原始 SR。本项目把载体条件扩展到
+实机可能出现的 R8/R10/R11 packed/typeless 输出家族。补充修改后，Mode 1
+输出分辨率 NR 连续成功 600 帧，Mode 2 渲染分辨率 NR 连续成功 1200 帧。
+
+RTX 30 Profile 使用 RankFTW DLSS NR 310.8.SF-v2（文件版本 310.8.SF.0）。
+该 nvngx_dlssnr.dll 没有数字签名且不提交到 GitHub。RTX 50 Profile 继续使用
+NVIDIA 签名的 310.8.0 预览运行时；两个 nrchain/runtime 组合不能交叉混用。
 
 原插件说明还注明：其 HDR 模型画面合成方法派生自 clshortfuse 的 RenoDX
 DLSS 5 Neural Rendering add-on（MIT）。完整第三方声明见：
@@ -40,17 +59,23 @@ payload\ReShade\reshade-shaders\Addons\pre-nr\THIRD_PARTY_NOTICES.txt
 nr-before-sr.zh-CN.addon64
 522D979CBFF335710F362B9FC2F330988673D7F8C7A1A2D93DA9980EC8DDA695
 
-nrchain_nvngx.dll
+nrchain_nvngx.dll（RTX 50）
 DB26E486592B252072BA5734FC2B27412863B8526826225640C837D4B4D11B60
+
+nrchain_nvngx.dll（RTX 30，修复包署名华晓熊）
+46041A5FF91AE2FD907E310D132AABC3C4A1ECD48DACE511B8672909D5D9C2FB
 
 nvngx_dlssnr.dll（RTX 50 测试运行时，不提交到 GitHub）
 E16BCF15E16E13F527491CDF7845B2FE6521A738D8F7C9C721866A8496E1FC8E
 
-OptiScaler.dll（本包使用的兼容构建）
-38FA288ABC16EE8E4FE1A1992E731ED7FAAB167FE09C41C93D0D8F01D8D110CF
+nvngx_dlssnr.dll（RTX 30 RankFTW SF-v2、无签名、不提交到 GitHub）
+6EB209E764F39872625DEBD6ABAF45E2BB6322F6F270F781F70C059AE30B3927
+
+OptiScaler.dll（本地从双模式补丁重建）
+3211054BDA7FCF648569155304B2AFF2B1D0F9D050CBB64AB0AB9FBA7F58DC9A
 
 4. 适用范围
 
-当前完整包按 RTX 50 系和 Windows 11 24H2/较新 NVIDIA 驱动测试。DLSS NR
-是预览/非公开接口，游戏、驱动或模型更新后可能失效。RTX 40 所需运行时与
-本包默认文件不同，未经重新验证不要直接替换。
+当前双 Profile 包覆盖 RTX 30 与 RTX 50；用户已确认修复组合也能在 RTX 50
+生效。DLSS NR 是预览/非公开接口，游戏、驱动或模型更新后可能失效。RTX 40
+没有在此包中建立已验证的一键 Profile，不能把 RTX 30/50 文件随意混用。

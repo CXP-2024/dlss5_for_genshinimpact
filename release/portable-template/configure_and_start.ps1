@@ -1,5 +1,8 @@
 param(
-    [string]$GamePath
+    [string]$GamePath,
+    [ValidateSet('auto', 'rtx30', 'rtx50')]
+    [string]$NrProfile = 'auto',
+    [switch]$ConfigureOnly
 )
 
 Set-StrictMode -Version Latest
@@ -63,6 +66,59 @@ function Select-GameExe {
     return $candidate
 }
 
+function Get-NvidiaGpuNames {
+    $names = @()
+    try {
+        $names = @(Get-CimInstance -ClassName Win32_VideoController -ErrorAction Stop |
+            Where-Object { $_.Name -match '(?i)NVIDIA|GeForce|RTX' } |
+            ForEach-Object { [string]$_.Name } |
+            Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+    } catch { }
+
+    if ($names.Count -eq 0) {
+        try {
+            $nvidiaSmi = Get-Command 'nvidia-smi.exe' -ErrorAction Stop
+            $names = @(& $nvidiaSmi.Source --query-gpu=name --format=csv,noheader 2>$null |
+                ForEach-Object { ([string]$_).Trim() } |
+                Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+        } catch { }
+    }
+    return @($names | Select-Object -Unique)
+}
+
+function Resolve-NrProfile {
+    param([string]$RequestedProfile)
+    if ($RequestedProfile -ne 'auto') { return $RequestedProfile }
+
+    $gpuNames = @(Get-NvidiaGpuNames)
+    foreach ($name in $gpuNames) {
+        if ($name -match '(?i)\bRTX\s*50\d{2}\b') {
+            Write-Host "Detected GPU: $name" -ForegroundColor Green
+            return 'rtx50'
+        }
+    }
+    foreach ($name in $gpuNames) {
+        if ($name -match '(?i)\bRTX\s*30\d{2}\b') {
+            Write-Host "Detected GPU: $name" -ForegroundColor Green
+            return 'rtx30'
+        }
+    }
+
+    if ($gpuNames.Count -gt 0) {
+        Write-Host ("No validated automatic profile for: {0}" -f ($gpuNames -join ', ')) -ForegroundColor Yellow
+    } else {
+        Write-Host 'Could not identify the NVIDIA GPU automatically.' -ForegroundColor Yellow
+    }
+    Write-Host 'Enter 30 for the RTX 30 profile or 50 for the RTX 50 profile.' -ForegroundColor Cyan
+    while ($true) {
+        switch ((Read-Host 'GPU profile').Trim()) {
+            '30' { return 'rtx30' }
+            '50' { return 'rtx50' }
+            default { Write-Host 'Please enter 30 or 50.' -ForegroundColor Red }
+        }
+    }
+}
+
 function Set-IniValue {
     param([string]$Path, [string]$Section, [string]$Key, [string]$Value)
     $lines = [Collections.Generic.List[string]]::new()
@@ -98,15 +154,19 @@ function Set-IniValue {
     [IO.File]::WriteAllLines($Path, $lines, [Text.UTF8Encoding]::new($false))
 }
 
+$resolvedNrProfile = Resolve-NrProfile -RequestedProfile $NrProfile
 $gameExe = Select-GameExe -InitialPath $(if ($GamePath) { $GamePath } else { Read-SavedGamePath })
 $gameDir = Split-Path -Parent $gameExe
 $reshade = Join-Path $payload 'ReShade\ReShade64.dll'
 $bridge = Join-Path $payload 'Bridge\Dx11FsrBridge.dll'
 $opti = Join-Path $payload 'OptiScaler\OptiScaler.dll'
-$addons = Join-Path $payload 'ReShade\reshade-shaders\Addons'
 $shaders = Join-Path $payload 'ReShade\reshade-shaders\Shaders'
 $textures = Join-Path $payload 'ReShade\reshade-shaders\Textures'
-$preNr = Join-Path $payload 'ReShade\reshade-shaders\Addons\pre-nr'
+$preNrProfileDir = switch ($resolvedNrProfile) {
+    'rtx30' { 'pre-nr-rtx30' }
+    'rtx50' { 'pre-nr' }
+}
+$preNr = Join-Path $payload ("ReShade\reshade-shaders\Addons\{0}" -f $preNrProfileDir)
 $optiIni = Join-Path $payload 'OptiScaler\OptiScaler.ini'
 $preNrIni = Join-Path $preNr 'nr_before_sr.ini'
 $reshadeIni = Join-Path $gameDir 'ReShade.ini'
@@ -151,9 +211,6 @@ Set-IniValue -Path $optiIni -Section 'DlssNr' -Key 'Enabled' -Value 'false'
 Set-IniValue -Path $optiIni -Section 'Log' -Key 'LogToFile' -Value 'true'
 Set-IniValue -Path $optiIni -Section 'Log' -Key 'LogLevel' -Value '2'
 Set-IniValue -Path $optiIni -Section 'Log' -Key 'LogFileName' -Value ([IO.Path]::GetFullPath((Join-Path $payload 'OptiScaler\OptiScaler.log')))
-Set-IniValue -Path $preNrIni -Section 'NRBeforeSR' -Key 'Enabled' -Value '1'
-Set-IniValue -Path $preNrIni -Section 'NRBeforeSR' -Key 'Mode' -Value '2'
-
 New-Item -ItemType Directory -Force -Path (Join-Path $root 'state\ReShadeCache') | Out-Null
 New-Item -ItemType Directory -Force -Path (Join-Path $root 'state\Screenshots') | Out-Null
 
@@ -181,5 +238,8 @@ $config = [ordered]@{
 }
 $config | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $fpsConfigPath -Encoding UTF8
 Write-Host "Configuration complete: $gameExe" -ForegroundColor Green
-Write-Host 'v1.2 chain: render-resolution DLSS5 NR -> original DLSS Super Resolution -> ReShade/UI' -ForegroundColor Cyan
-Start-Process -FilePath $unlockerPath -WorkingDirectory $root
+Write-Host ("NR profile: {0} ({1})" -f $resolvedNrProfile, $preNrProfileDir) -ForegroundColor Cyan
+Write-Host 'The add-on keeps its saved mode: Mode 2 = NR -> DLSS SR; Mode 1 = DLSS SR -> output-resolution NR.' -ForegroundColor Cyan
+if (-not $ConfigureOnly) {
+    Start-Process -FilePath $unlockerPath -WorkingDirectory $root
+}

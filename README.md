@@ -17,7 +17,7 @@
 
 1. 务必下载完整文件夹包，并将其放到任意 **英文路径下。不要放在带有中文路径或者空格的路径下**
 2. 只双击 `启动_DLSS5.bat`。
-3. 第一次选择 `YuanShen.exe`，以后再次双击即可。
+3. 第一次选择 `YuanShen.exe` 或 `GenshinImpact.exe`，以后再次双击即可。
 4. 如果不成功，请看[失败排查！！！一定要看！一定要看！一定要看！！！](#报错闪退-进不去原神-进去了画面未生效可能原因)
 
 两个完整包都已经包含各自运行所需组件，不需要提前安装 GIMI、ReShade、OptiScaler、DLSS DLL 或 FPS Unlocker。v1.1 包含原来的 DLSS5 bridge/RenoDX 后置 NR 链路；v1.2 改用前置 NR 插件与经过兼容修改的 OptiScaler。只需运行批处理文件，不需要打开 `.ps1`，也不需要改名 `dxgi.dll`/`d3d12.dll`。
@@ -31,7 +31,7 @@ v1.1 和 v1.2 是两个并列版本，请按需要选择并放在相互独立的
 | 版本 | DLSS5 NR 的位置 | 适合人群 | 当前显卡范围 |
 | --- | --- | --- | --- |
 | v1.1 后置 NR 版 | 原始 DLSS 已经得到输出帧后，再在输出分辨率执行 NR；NR 本身不承担低分辨率超分 | 希望保留原来效果，或不需要 v1.2“低分辨率 NR 后再超分”的用户 | RTX 50；RTX 40, 30 按下文替换专用 NR 模型 |
-| v1.2 前置 NR 超分版 | 先在低渲染分辨率执行 DLSS5 NR，再由原始 DLSS Super Resolution 放大到输出分辨率 | 希望降低 NR 工作分辨率、使用新版前置超分链路的用户 | 当前完整包只验证 RTX 50，40系请自行尝试 |
+| v1.2 双模式版 | 默认先在低渲染分辨率执行 DLSS5 NR，再由原始 DLSS SR 放大；也可切回原插件的“DLSS SR 后在输出分辨率 NR” | 希望使用前置超分，或在同一包中比较/使用恢复后的后置 NR | RTX 30 / RTX 50 独立 Profile，一键自动选择 |
 
 ## v1.1：后置 NR 版（有问题进q 1107530312 联系）
 
@@ -46,7 +46,18 @@ v1.1 已修复此前 RenoDX DLSS5 插件的显存泄漏问题，并更新 DLSS5/
 
 ## v1.2：前置 NR 超分版
 
-v1.2 把 DLSS5 Neural Rendering 放到低分辨率阶段，然后把 NR 结果交给原始 DLSS Super Resolution 放大。它不是在原分辨率跑完 NR 后再缩放。实测链路为 `960x540 NR -> 960x540 -> DLSS -> 1920x1080`，Feature 18 连续成功 5400 帧，测试段约 160 FPS。
+v1.2 默认把 DLSS5 Neural Rendering 放到低分辨率阶段，然后把 NR 结果交给原始 DLSS Super Resolution 放大。实测链路为 `960x540 NR -> 960x540 -> DLSS -> 1920x1080`，Feature 18 连续成功 5400 帧，测试段约 160 FPS。兼容更新同时恢复了插件原有的 Mode 1：`低分辨率输入 -> DLSS SR -> 输出分辨率 NR`。
+
+最新双 Profile 一键包会由 `启动_DLSS5.bat` 自动识别 RTX 30/RTX 50；识别失败时可使用随包的两个显式入口。启动器不再重写 `Enabled` 或 `Mode`，因此插件界面的模式选择会跨重启保留。详细原因和源码审核见 [`docs/RTX30_DUAL_MODE_FIX.md`](docs/RTX30_DUAL_MODE_FIX.md)。
+
+最新本地验收包（云盘链接待更新）：
+
+- 文件名：`DLSS5_GI_Ready_v1.2_PreNR_RTX30_RTX50_20260905.7z`
+- 文件大小：`221,201,554 bytes`（约 211 MiB）
+- SHA-256：`32012DDF73AA90B0387A388088E00C5F3738662B67569F7FFB1FD64A51B07BBB`
+- 7z 解压密码：`yuanshenqidong`；已启用 AES 内容与文件名加密
+
+下面两个链接仍是 2026-09-04 的 RTX 50 单 Profile 旧包，尚不包含本次 RTX 30/双模式兼容更新：
 
 - [Google Drive 下载](https://drive.google.com/file/d/1u6WCgz7SPKxeKIclsioQiCopEP2IckCY/view?usp=sharing)（海外/不限速）
 - [百度网盘下载](https://pan.baidu.com/s/1nuIAeIADuH9SIkNnhgeKRQ?pwd=95ft)（国内访问，提取码：`95ft`）
@@ -56,7 +67,7 @@ v1.2 把 DLSS5 Neural Rendering 放到低分辨率阶段，然后把 NR 结果�
 - 7z 解压密码：`yuanshenqidong`
 - 7z 已启用 AES 内容加密与文件名加密，密码错误时无法查看目录结构
 
-v1.2 当前完整包只验证 RTX 50。RTX 40,30系可自行尝试。
+不要把 v1.1 的 `dlss5-dx11-bridge`、RenoDX 后置 NR Add-on 或 RTX 40 模型直接覆盖到 v1.2 目录。RTX 30 Profile 使用无数字签名的 RankFTW 310.8.SF-v2 runtime；RTX 50 Profile 使用 NVIDIA 签名 runtime，两套 `nrchain/runtime` 必须成套保留。
 
 ### RTX 40，30 系列专用 DLSS NR 模型
 
@@ -74,7 +85,7 @@ DLSS5_GI_Ready\payload\ReShade\reshade-shaders\Addons\nvngx_dlssnr.dll
 
 ## 报错闪退-进不去原神-进去了画面未生效可能原因
 
-1. 请确保自己的系统是window11 24H及以上系统， 如不是请更新系统至最新（win10请升级至win11）。请确保你的显卡是Nvidia显卡的30，40系或者50系。请确保你使用的压缩包来源与此处的Google云盘或者百度网盘链接一致。请确保解压后放到任意 **英文路径下**，不要放在带有中文或者空格或者特殊字符的路径下*
+1. 请确保自己的系统是window11 24H及以上系统， 如不是请更新系统至最新（win10请升级至win11）。v1.1 按原说明选择 30/40/50 系模型；最新 v1.2 双 Profile 一键包用于 NVIDIA RTX 30/50 系，RTX 40 暂未自动归类与验证。请确保你使用的压缩包来源与此处记录一致。请确保解压后放到任意 **英文路径下**，不要放在带有中文或者空格或者特殊字符的路径下*
 2. 请在第一次启动前删除或卸载除当前压缩包以外的所有你安装过的第三方内容（如第三方游戏目录注入式启动器，Reshade组件，RHI组件等等），保证游戏目录文件夹处于干净状态，防止与DLSS5启动冲突。
 3. 首先关闭你的所有杀毒软件，包括但不限于毒枭360，毒王电脑管家，毒霸金山... 其次检查是否插件被windows拦截了，具体按在win键，搜索安全，进入到windows安全中心，找到如下页面是否把UnlockerStub.dll给拦截了，需要允许其使用这个程序
 ![alt text](docs/images/fix_stub.dll.png)
@@ -120,7 +131,7 @@ DLSS5_GI_Ready\payload\ReShade\reshade-shaders\Addons\nvngx_dlssnr.dll
 
 v1.1 的 NR 位于原始 DLSS 输出之后。它适合希望保留原方案，或者不需要把 NR 放到低渲染分辨率再超分的用户。旧桥接插件还处理了 ReShade 二次包装自建 D3D12 设备造成的启动冲突：创建内部设备时临时绕过 ReShade 的设备 hook、还原原生 adapter，随后恢复 hook；不修改系统 DLL。
 
-### v1.2 前置 NR 超分链路
+### v1.2 双模式链路
 
 ```text
 原神 DX11 低分辨率颜色 / 深度 / 运动向量
@@ -132,12 +143,25 @@ v1.1 的 NR 位于原始 DLSS 输出之后。它适合希望保留原方案，�
   -> ReShade / UI
 ```
 
-v1.2 不加载 v1.1 的 `dlss5-dx11-bridge` 与 RenoDX 后置 NR Add-on，并关闭 OptiScaler 内置后置 NR，确保每帧只执行一次前置 NR。它包含两项针对无 GIMI 路径的 OptiScaler 兼容修复：
+v1.2 不加载 v1.1 的 `dlss5-dx11-bridge` 与 RenoDX 后置 NR Add-on，并关闭 OptiScaler 内置 NR，避免与外部双模式 add-on 重复处理。
 
-1. 在 `dlss_12` 路径延迟原生 D3D11 NGX 初始化，改用 OptiScaler 参数表交接 D3D12 颜色、深度、运动向量和输出资源，再由 D3D12 Feature 初始化原生 NGX。
-2. 创建私有 DLSS-on-DX12 设备时解包 ReShade adapter，并只在创建调用期间临时绕过 `D3D12CreateDevice` detour，完成后立即恢复；不修改系统 DLL。
+取消插件里的“使用渲染分辨率 NR -> SR”后，外部 add-on 改走：
 
-脚本每次启动都会把 ReShade 的 `AddonPath`、Shader 路径和 OptiScaler 路径改为压缩包当前位置。GitHub 只保存源码、补丁和小型 release 文件；完整运行包与大型 NVIDIA DLL 不放入 Git 历史。v1.2 对应源码补丁见 [`src/patches/OptiScaler-DLSSOn12-pre-NR.patch`](src/patches/OptiScaler-DLSSOn12-pre-NR.patch)。
+```text
+原神 DX11 低分辨率颜色 / 深度 / 运动向量
+  -> 原始 DLSS Feature 1 放大到输出分辨率
+  -> DLSS5 Feature 18 在输出分辨率执行 Neural Rendering
+  -> 结果复制回 DX11
+  -> ReShade / UI
+```
+
+OptiScaler 内置 NR 仍保持关闭，但外部 add-on 会按 Mode 1 或 Mode 2 只执行选中的一条链路。兼容构建包括：
+
+1. 在 `dlss_12` 路径按驱动要求初始化原生 D3D11 NGX，并用原生 D3D12 NGX 参数对象交接资源，解决 RTX 30 上的私有参数 ABI/初始化顺序问题。
+2. 每帧维护 queue-affinity 标记和 typed/untyped D3D12 资源槽；原神输出属于 R8/R10/R11 packed/typeless 格式时使用 FP16 输出载体，整条链完成后再写回，从而恢复 Mode 1 的输出分辨率 NR。
+3. 创建私有 DLSS-on-DX12 设备时解包 ReShade adapter，并只在创建调用期间临时绕过 `D3D12CreateDevice` detour，完成后立即恢复；不修改系统 DLL。
+
+脚本每次启动都会把 ReShade 的 `AddonPath`、Shader 路径和 OptiScaler 路径改为压缩包当前位置，但不会覆盖 add-on 的 Enabled/Mode。GitHub 只保存源码、补丁和小型 release 文件；完整运行包与大型 NVIDIA/RankFTW DLL 不放入 Git 历史。重建时先应用 [`OptiScaler-DLSSOn12-pre-NR.patch`](src/patches/OptiScaler-DLSSOn12-pre-NR.patch)，再应用 [`OptiScaler-RTX30-dual-mode.delta.patch`](src/patches/OptiScaler-RTX30-dual-mode.delta.patch)。
 
 ## 引用的开源项目
 
@@ -153,16 +177,17 @@ v1.2 不加载 v1.1 的 `dlss5-dx11-bridge` 与 RenoDX 后置 NR Add-on，并关
 | --- | --- | --- | --- | --- |
 | `Dx11FsrBridge.dll` | v1.1、v1.2 | [Genshin FSR Bridge](https://github.com/AizawaHikaru233/genshin_fsr_brigde) | v1.2 沿用 v1.1 已验证二进制，本轮未修改 | 可以换成来源可信且接口/配置兼容的同用途构建 |
 | `OptiScaler.dll` | v1.1 | [OptiScaler](https://github.com/optiscaler/OptiScaler) / [OptiScaler DLSSNR fork](https://github.com/Dagherbou/OptiScaler_DLSSNR) | v1.1 使用原有版本 | 可以，但必须匹配桥接接口和配置 |
-| `OptiScaler.dll` | v1.2 | [OptiScaler DLSSNR fork](https://github.com/Dagherbou/OptiScaler_DLSSNR) | **修改过源码**：加入无 GIMI 参数交接与 ReShade 私有 D3D12 修复 | 不要直接换成普通上游版，否则前置 NR 可能变成 0 帧或启动崩溃；如替换必须自行合入本仓库 patch |
+| `OptiScaler.dll` | v1.2 | [OptiScaler DLSSNR fork](https://github.com/Dagherbou/OptiScaler_DLSSNR)；RTX 30 增量由修复包文档署名“华晓熊” | **修改过源码**：原生 DX12 NGX 参数交接、queue-affinity、FP16 双模式输出及 ReShade 私有 D3D12 修复 | 不要直接换成普通上游版；替换构建必须依次合入本仓库两个 patch |
 | `dlss5-dx11-bridge.addon64` | 仅 v1.1 | [DLSS5 DX11 Bridge](https://github.com/NIGos/dlss5-dx11-bridge) | **修改过源码**：加入 ReShade/D3D12 兼容处理 | 不建议换成未包含本项目兼容修复的普通版 |
 | RenoDX DLSS5 Add-on | 仅 v1.1 | [RenoDX](https://github.com/clshortfuse/renodx) | 本项目没有改写其 NR 算法 | 可以换兼容版本；不要复制到 v1.2 造成双重 NR |
-| `nr-before-sr.zh-CN.addon64`、`nrchain_nvngx.dll` | 仅 v1.2 | 用户提供的 `B站野生的装机宅 DLSS5-AI渲染超分版-RTX50.zip`，署名 Bilibili UP 主“野生的装机宅” | 两个二进制**未修改**；只把 `nr_before_sr.ini` 的 Mode 从 1 调成 2 | 二进制可以换兼容版本，但配置必须保持前置 Mode 2，且应保留原作者署名与声明 |
-| `nvngx_dlss.dll`、`nvngx_dlssnr.dll` | v1.1、v1.2 | NVIDIA NGX/DLSS 运行时，由相应上游包提供 | 二进制未修改 | 可以从其他可信来源替换兼容版本，但必须匹配显卡代际、驱动、DLSS/NR 接口；RTX 40/50 模型不要混用 |
+| `nr-before-sr.zh-CN.addon64`、RTX 50 `nrchain_nvngx.dll` | 仅 v1.2 | 用户提供的 `B站野生的装机宅 DLSS5-AI渲染超分版-RTX50.zip`，署名 Bilibili UP 主“野生的装机宅” | 二进制**未修改**；Mode 2 仅为初始默认值，Mode 1 已恢复 | 可以换兼容版本，但必须保留双模式资源契约、作者署名与声明 |
+| RTX 30 `nrchain_nvngx.dll` / Profile | 仅 v1.2 | `DLSS5_GI_Ready_v1.2_PreNR_fixRTX30.zip`，文档署名“华晓熊” | 未修改所提供的 sidecar；本项目增加自动选择和不覆盖 Mode 的启动逻辑 | 必须与 RTX 30 RankFTW runtime 成套，不能和 RTX 50 sidecar 交叉 |
+| `nvngx_dlss.dll`、`nvngx_dlssnr.dll` | v1.1、v1.2 | NVIDIA NGX/DLSS 运行时；RTX 30 v1.2 兼容 runtime 来自 RankFTW SF-v2 | 二进制未修改；RTX 30 runtime 无数字签名且不提交 GitHub | 可以从可信来源替换兼容版本，但必须匹配显卡代际、驱动、DLSS/NR 接口；不同 Profile 不要混用 |
 | `ReShade64.dll` | v1.1、v1.2 | [ReShade](https://reshade.me/) Add-on 版本 | 二进制未修改，只调整搜索路径和加载配置 | 可以换兼容的 ReShade Add-on 版本；普通无 Add-on 构建不能代替 |
 | `unlockfps_nc.exe`、`UnlockerStub.dll` | v1.1、v1.2 | [Genshin FPS Unlock](https://github.com/34736384/genshin-fps-unlock) | 未修改解帧算法，只由一键脚本写入路径和 DLL 列表 | 可以从上游取得兼容版本替换，两个文件应成套并重新检查配置 |
 | HDR/ReShade shaders | v1.1、v1.2 | RenoDX、ReShade shader 上游及包内声明 | 本项目主要整合路径和预设 | 可以从上游更新；更新后自行确认 HDR 色彩空间与效果顺序 |
 
-简单来说：表中标记为“二进制未修改”的 DLL，可以自行从官方、上游发布页或其他可信来源获取兼容版本替换，不必限定使用本仓库打包的同一份文件；替换前请核对 x64 架构、显卡代际、API/接口版本和 SHA-256，并保留旧文件以便回退。**v1.2 的修改版 `OptiScaler.dll` 与 v1.1 的修改版 DLSS5 DX11 Bridge 是兼容关键点，不能用普通上游 DLL 直接覆盖。**
+简单来说：表中标记为“二进制未修改”的 DLL，可以自行从官方、上游发布页或其他可信来源获取兼容版本替换，不必限定使用本仓库打包的同一份文件；替换前请核对 x64 架构、显卡代际、API/接口版本和 SHA-256，并保留旧文件以便回退。**v1.2 的修改版 `OptiScaler.dll`、当前 add-on 与对应显卡 Profile 是一组兼容关键点；不能只覆盖其中一个文件后假定仍可用。**
 
 前置 NR 插件的完整署名、未修改文件哈希和第三方声明见 [`ATTRIBUTION.txt`](release/portable-template/ATTRIBUTION.txt)、[`THIRD_PARTY_NOTICES.txt`](release/pre-nr/THIRD_PARTY_NOTICES.txt) 与 [`docs/REDISTRIBUTION.md`](docs/REDISTRIBUTION.md)。
 

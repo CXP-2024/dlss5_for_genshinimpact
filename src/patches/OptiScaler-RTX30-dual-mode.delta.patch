@@ -1,0 +1,587 @@
+warning: in the working copy of 'OptiScaler/upscalers/IFeature_Dx11wDx12.cpp', LF will be replaced by CRLF the next time Git touches it
+diff --git a/OptiScaler/inputs/NVNGX_DLSS_Dx11.cpp b/OptiScaler/inputs/NVNGX_DLSS_Dx11.cpp
+index 0370b096..4c491b1a 100644
+--- a/OptiScaler/inputs/NVNGX_DLSS_Dx11.cpp
++++ b/OptiScaler/inputs/NVNGX_DLSS_Dx11.cpp
+@@ -26,6 +26,112 @@ static bool shutdown = false;
+ static bool _skipInit = false;
+ static wchar_t const** paths;
+ 
++// A D3D11 game using the DLSS-on-D3D12 bridge needs the native NGX core to be
++// initialised before the bridge creates its private D3D12 feature (this is the
++// ordering expected by the RTX 30/40 driver).  It still must receive
++// OptiScaler's parameter object, however: the bridge and the pre-NR add-on
++// exchange D3D12 resource pointers through that object.  Keep the two
++// decisions independent instead of using the old "defer everything" switch.
++static bool forceCustomDx11Parameters = false;
++
++static bool UsesD3D12Bridge()
++{
++    return Config::Instance()->Dx11Upscaler.value_or_default() == Upscaler::DLSS_on12;
++}
++
++static bool UseCustomDx11Parameters()
++{
++    return forceCustomDx11Parameters || UsesD3D12Bridge();
++}
++
++// The bridge is entered through the D3D11 NGX ABI, but the actual DLSS
++// feature is created by the native D3D12 runtime.  Passing OptiScaler's C++
++// parameter implementation to that runtime is unsafe (the driver uses
++// private storage in its parameter object).  Once the D3D11 device is known,
++// prepare the same interop device the feature would create and use the
++// driver's native D3D12 parameter table for the bridge hand-off.
++static bool EnsureNativeD3D12ForBridgeParams()
++{
++    if (!UsesD3D12Bridge() || D3D11Device == nullptr)
++        return false;
++
++    if (!WithDx12::PrepareD3D12ForD3D11(D3D11Device, D3D_FEATURE_LEVEL_11_0))
++    {
++        LOG_WARN("Bridge parameter hand-off could not prepare the D3D12 interop device");
++        return false;
++    }
++
++    auto* device = WithDx12::GetD3D12Device();
++    if (device == nullptr || !NVNGXProxy::InitDx12(device))
++    {
++        LOG_WARN("Bridge parameter hand-off could not initialise native D3D12 NGX");
++        return false;
++    }
++
++    return true;
++}
++
++// Return the driver's D3D12 parameter implementation when the D3D11 entry
++// point is being used as a DLSS-on-D3D12 bridge.  The object returned by the
++// D3D12 NGX ABI has the private storage expected by the driver and also
++// accepts ID3D12Resource values written by IFeature_Dx11wDx12.  This is the
++// only parameter representation that is valid on both sides of the bridge.
++// The caller owns the returned table according to the allocation type set
++// below (persistent for GetParameters, dynamic for the other two APIs).
++enum class NativeParamRequest
++{
++    Persistent,
++    Capability,
++    Dynamic,
++};
++
++static bool TryGetNativeD3D12Parameters(NVSDK_NGX_Parameter** outParameters, NativeParamRequest request)
++{
++    if (outParameters == nullptr || !UsesD3D12Bridge() || !Config::Instance()->DLSSEnabled.value_or_default() ||
++        NVNGXProxy::NVNGXModule() == nullptr)
++        return false;
++
++    if (!EnsureNativeD3D12ForBridgeParams())
++        return false;
++
++    NVSDK_NGX_Result result = NVSDK_NGX_Result_Fail;
++    switch (request)
++    {
++    case NativeParamRequest::Persistent:
++        if (NVNGXProxy::D3D12_GetParameters() != nullptr)
++            result = NVNGXProxy::D3D12_GetParameters()(outParameters);
++        break;
++    case NativeParamRequest::Capability:
++        if (NVNGXProxy::D3D12_GetCapabilityParameters() != nullptr)
++            result = NVNGXProxy::D3D12_GetCapabilityParameters()(outParameters);
++        break;
++    case NativeParamRequest::Dynamic:
++        if (NVNGXProxy::D3D12_AllocateParameters() != nullptr)
++            result = NVNGXProxy::D3D12_AllocateParameters()(outParameters);
++        break;
++    }
++
++    if (result != NVSDK_NGX_Result_Success || *outParameters == nullptr)
++    {
++        LOG_WARN("D3D11 bridge native D3D12 parameter request {} failed: result=0x{:X} ptr={:p}",
++                 static_cast<int>(request), static_cast<UINT>(result),
++                 outParameters == nullptr ? nullptr : static_cast<void*>(*outParameters));
++        return false;
++    }
++
++    // Add the normal OptiScaler capability/configuration keys to the native
++    // object. Unknown keys are legal in NGX parameter tables and are needed by
++    // the bridge/add-on handshake (DLSSNR.* and the resource aliases).
++    InitNGXParameters(*outParameters, API::DX12);
++    SetNGXParamAllocType(*(*outParameters),
++                         request == NativeParamRequest::Persistent ? NGX_AllocTypes::NVPersistent
++                                                                     : NGX_AllocTypes::NVDynamic);
++
++    LOG_INFO("D3D11 bridge using native D3D12 NGX parameters: request={} ptr={:p}", static_cast<int>(request),
++             static_cast<void*>(*outParameters));
++    return true;
++}
++
+ // Marker exposed by the bundled GIMI device wrapper. Native NGX requires the
+ // device and context to be the original pair, not the wrapper identity.
+ static constexpr GUID kGimiHackerDevice = {0x83ffd841,
+@@ -427,6 +533,16 @@ NVSDK_NGX_API NVSDK_NGX_Result NVSDK_NGX_D3D11_Init_with_ProjectID(
+ {
+     NVSDK_NGX_FeatureCommonInfo localFeatureInfo = {};
+ 
++    // Keep the bridge device available before any parameter query.  Some
++    // games ask for capability parameters immediately after this entry point
++    // returns, before CreateFeature has had a chance to recover the device
++    // from a context.
++    if (InDevice != nullptr)
++    {
++        D3D11Device = InDevice;
++        State::Instance().currentD3D11Device = InDevice;
++    }
++
+     if (InFeatureInfo != nullptr)
+         std::memcpy(&localFeatureInfo, InFeatureInfo, sizeof(NVSDK_NGX_FeatureCommonInfo));
+ 
+@@ -437,6 +553,10 @@ NVSDK_NGX_API NVSDK_NGX_Result NVSDK_NGX_D3D11_Init_with_ProjectID(
+     if (Config::Instance()->UseGenericAppIdWithDlss.value_or_default())
+         projectId = project_id_override;
+ 
++    LOG_INFO("D3D11 with_ProjectID entry: skipInit={} dlssEnabled={} bridge={} ngxModule={:p}",
++             _skipInit, Config::Instance()->DLSSEnabled.value_or_default(), UsesD3D12Bridge(),
++             static_cast<void*>(NVNGXProxy::NVNGXModule()));
++
+     if (Config::Instance()->DLSSEnabled.value_or_default() && !_skipInit)
+     {
+         if (NVNGXProxy::NVNGXModule() == nullptr)
+@@ -449,9 +569,21 @@ NVSDK_NGX_API NVSDK_NGX_Result NVSDK_NGX_D3D11_Init_with_ProjectID(
+         // Deferring native D3D11 initialisation makes GetCapabilityParameters return OptiScaler's
+         // cross-pointer-compatible table. The D3D12 feature initialises native NGX on its own.
+         // GIMI additionally needs this because its wrapper and native context are not an NGX-valid pair.
+-        const bool usesD3D12Bridge =
+-            Config::Instance()->Dx11Upscaler.value_or_default() == Upscaler::DLSS_on12;
+-        const bool deferNativeInit = IsGimiDevice(InDevice) || usesD3D12Bridge;
++        const bool usesD3D12Bridge = UsesD3D12Bridge();
++        const bool isGimiDevice = IsGimiDevice(InDevice);
++        forceCustomDx11Parameters = isGimiDevice || usesD3D12Bridge;
++        // GIMI supplies a wrapper which cannot be paired with the native D3D11
++        // context.  The no-GIMI DLSS-on-D3D12 path, on the other hand, must
++        // initialise the native core here; only its parameter table remains
++        // custom for the bridge/add-on hand-off.
++        // The bridge path is deliberately eager even when a wrapper happens to
++        // expose the GIMI marker: RTX 30/40 NGX needs a native D3D11 init before
++        // the private D3D12 feature is created.  Only a pure GIMI (non-bridge)
++        // caller keeps the old deferred behaviour.
++        const bool deferNativeInit = isGimiDevice && !usesD3D12Bridge;
++
++        LOG_INFO("D3D11 init policy: gimiMarker={} bridge={} deferNativeInit={} customParams={}",
++                 isGimiDevice, usesD3D12Bridge, deferNativeInit, forceCustomDx11Parameters);
+ 
+         if (deferNativeInit)
+         {
+@@ -462,8 +594,8 @@ NVSDK_NGX_API NVSDK_NGX_Result NVSDK_NGX_D3D11_Init_with_ProjectID(
+             const auto nativeResult = NVNGXProxy::D3D11_Init_ProjectID()(
+                 projectId, InEngineType, InEngineVersion, InApplicationDataPath, InDevice, InSDKVersion,
+                 &localFeatureInfo);
+-            LOG_INFO("calling NVNGXProxy::D3D11_Init_ProjectID from with_ProjectID result: {0:X}",
+-                     (UINT) nativeResult);
++            LOG_INFO("calling NVNGXProxy::D3D11_Init_ProjectID from with_ProjectID result: {0:X}; custom bridge parameters: {}",
++                     (UINT) nativeResult, forceCustomDx11Parameters);
+ 
+             if (nativeResult == NVSDK_NGX_Result_Success ||
+                 nativeResult == NVSDK_NGX_Result_FAIL_FeatureAlreadyExists)
+@@ -555,8 +687,15 @@ NVSDK_NGX_API NVSDK_NGX_Result NVSDK_NGX_D3D11_GetParameters(NVSDK_NGX_Parameter
+     if (OutParameters == nullptr)
+         return NVSDK_NGX_Result_FAIL_InvalidParameter;
+ 
+-    if (Config::Instance()->DLSSEnabled.value_or_default() && NVNGXProxy::NVNGXModule() != nullptr &&
+-        NVNGXProxy::D3D11_GetParameters() != nullptr)
++    // A DLSS-on-D3D12 bridge must hand the same native D3D12 parameter
++    // object to the real D3D12 Create/Evaluate calls.  Trying this first is
++    // what avoids the RTX 30 driver's private-ABI crash while preserving the
++    // D3D12 resource slots consumed by the pre-NR observer.
++    if (TryGetNativeD3D12Parameters(OutParameters, NativeParamRequest::Persistent))
++        return NVSDK_NGX_Result_Success;
++
++    if (!UseCustomDx11Parameters() && Config::Instance()->DLSSEnabled.value_or_default() &&
++        NVNGXProxy::NVNGXModule() != nullptr && NVNGXProxy::D3D11_GetParameters() != nullptr)
+     {
+         LOG_INFO("calling NVNGXProxy::D3D11_GetParameters");
+ 
+@@ -594,8 +733,12 @@ NVSDK_NGX_API NVSDK_NGX_Result NVSDK_NGX_D3D11_GetCapabilityParameters(NVSDK_NGX
+     if (OutParameters == nullptr)
+         return NVSDK_NGX_Result_FAIL_InvalidParameter;
+ 
+-    if (Config::Instance()->DLSSEnabled.value_or_default() && NVNGXProxy::NVNGXModule() != nullptr &&
+-        NVNGXProxy::IsDx11Inited() && NVNGXProxy::D3D11_GetCapabilityParameters() != nullptr)
++    if (TryGetNativeD3D12Parameters(OutParameters, NativeParamRequest::Capability))
++        return NVSDK_NGX_Result_Success;
++
++    if (!UseCustomDx11Parameters() && Config::Instance()->DLSSEnabled.value_or_default() &&
++        NVNGXProxy::NVNGXModule() != nullptr && NVNGXProxy::IsDx11Inited() &&
++        NVNGXProxy::D3D11_GetCapabilityParameters() != nullptr)
+     {
+         LOG_INFO("calling NVNGXProxy::D3D11_GetCapabilityParameters");
+ 
+@@ -627,8 +770,11 @@ NVSDK_NGX_API NVSDK_NGX_Result NVSDK_NGX_D3D11_AllocateParameters(NVSDK_NGX_Para
+ {
+     LOG_FUNC();
+ 
+-    if (Config::Instance()->DLSSEnabled.value_or_default() && NVNGXProxy::NVNGXModule() != nullptr &&
+-        NVNGXProxy::D3D11_AllocateParameters() != nullptr)
++    if (TryGetNativeD3D12Parameters(OutParameters, NativeParamRequest::Dynamic))
++        return NVSDK_NGX_Result_Success;
++
++    if (!UseCustomDx11Parameters() && Config::Instance()->DLSSEnabled.value_or_default() &&
++        NVNGXProxy::NVNGXModule() != nullptr && NVNGXProxy::D3D11_AllocateParameters() != nullptr)
+     {
+         LOG_INFO("calling NVNGXProxy::D3D11_AllocateParameters");
+ 
+@@ -667,7 +813,16 @@ NVSDK_NGX_API NVSDK_NGX_Result NVSDK_NGX_D3D11_DestroyParameters(NVSDK_NGX_Param
+     if (InParameters == nullptr)
+         return NVSDK_NGX_Result_Fail;
+ 
+-    const bool success = TryDestroyNGXParameters(InParameters, NVNGXProxy::D3D11_DestroyParameters());
++    // Objects returned by the bridge path above are native D3D12 tables and
++    // must be released through the matching D3D12 entry point.  The custom
++    // fallback is also safe here (TryDestroy sees InternDynamic and uses
++    // delete), while non-bridge callers retain the normal D3D11 path.
++    bool success = false;
++    if (UsesD3D12Bridge() && NVNGXProxy::IsDx12Inited())
++        success = TryDestroyNGXParameters(InParameters, NVNGXProxy::D3D12_DestroyParameters());
++
++    if (!success)
++        success = TryDestroyNGXParameters(InParameters, NVNGXProxy::D3D11_DestroyParameters());
+ 
+     return success ? NVSDK_NGX_Result_Success : NVSDK_NGX_Result_Fail;
+ }
+diff --git a/OptiScaler/upscalers/IFeature_Dx11wDx12.cpp b/OptiScaler/upscalers/IFeature_Dx11wDx12.cpp
+index 0c6af4dd..4ed97715 100644
+--- a/OptiScaler/upscalers/IFeature_Dx11wDx12.cpp
++++ b/OptiScaler/upscalers/IFeature_Dx11wDx12.cpp
+@@ -11,6 +11,52 @@
+ 
+ #include <with_dx12/with_dx12.h>
+ 
++namespace
++{
++// The RTX30 pre-NR addon uses this private D3D12-object contract to prove
++// that a command list belongs to a stable graphics queue before it allows a
++// Feature 18 dispatch.  The contract is intentionally kept local to the
++// bridge: it is not part of the public NGX ABI.
++static const GUID kDlssNrQueueAffinityGuid =
++    { 0x2f90ef4a, 0x3aa3, 0x4de5, { 0xb5, 0x27, 0x91, 0x52, 0x31, 0xe2, 0x8c, 0x6a } };
++
++struct DlssNrQueueAffinityMarker
++{
++    ID3D12CommandQueue* queue;
++    UINT32 version;
++    UINT32 flags;
++};
++
++static_assert(sizeof(DlssNrQueueAffinityMarker) == 0x10,
++              "The RTX30 pre-NR queue-affinity marker must remain 16 bytes");
++
++void SetDlssNrQueueAffinityMarker(ID3D12GraphicsCommandList* commandList, ID3D12CommandQueue* commandQueue)
++{
++    if (commandList == nullptr || commandQueue == nullptr)
++        return;
++
++    DlssNrQueueAffinityMarker marker = { commandQueue, 2u, 0u };
++    const HRESULT result = commandList->SetPrivateData(kDlssNrQueueAffinityGuid, sizeof(marker), &marker);
++
++    static bool reportedSuccess = false;
++    static bool reportedFailure = false;
++    if (SUCCEEDED(result))
++    {
++        if (!reportedSuccess)
++        {
++            reportedSuccess = true;
++            LOG_INFO("DLSS-NR queue-affinity marker installed on bridge command list (queue={}, version=2)",
++                     static_cast<void*>(commandQueue));
++        }
++    }
++    else if (!reportedFailure)
++    {
++        reportedFailure = true;
++        LOG_WARN("DLSS-NR queue-affinity marker SetPrivateData failed: {:X}", static_cast<UINT>(result));
++    }
++}
++} // namespace
++
+ void IFeature_Dx11wDx12::ResourceBarrier(ID3D12GraphicsCommandList* commandList, ID3D12Resource* resource,
+                                          D3D12_RESOURCE_STATES beforeState, D3D12_RESOURCE_STATES afterState)
+ {
+@@ -56,6 +102,7 @@ bool IFeature_Dx11wDx12::CreateD3D12Objects()
+                 return false;
+             }
+ 
++            SetDlssNrQueueAffinityMarker(Dx12CommandList[i], Dx12CommandQueue);
+             Dx12CommandList[i]->Close();
+         }
+     }
+@@ -190,6 +237,11 @@ bool IFeature_Dx11wDx12::ProcessDx11Textures(const NVSDK_NGX_Parameter* InParame
+         return false;
+     }
+ 
++    // Some D3D12 layers recreate or clear object metadata during Reset.  Set
++    // the marker again while the list is open so the addon sees the current
++    // queue-affinity proof on every frame.
++    SetDlssNrQueueAffinityMarker(Dx12CommandList[frame], Dx12CommandQueue);
++
+     LOG_DEBUG("Shared handles prepared and synchronized by Dx11WithDx12 cache, frameKey: {}", cacheFrameKey);
+     return true;
+ }
+@@ -254,6 +306,8 @@ bool IFeature_Dx11wDx12::Init(ID3D11Device* InDevice, ID3D11DeviceContext* InCon
+     if (prep != S_OK)
+         LOG_WARN("Init: command list reset before feature creation failed: {:X}", (UINT) prep);
+ 
++    SetDlssNrQueueAffinityMarker(Dx12CommandList[0], Dx12CommandQueue);
++
+     const bool initialised = dx12Feature->Init(_dx11on12Device, Dx12CommandList[0], InParameters);
+ 
+     SetInit(initialised);
+@@ -347,6 +401,34 @@ bool IFeature_Dx11wDx12::Evaluate(ID3D11DeviceContext* InDeviceContext, NVSDK_NG
+         return *outResource != nullptr;
+     };
+ 
++    // Native D3D12 NGX keeps the typed D3D12 resource slot separate from its
++    // untyped/legacy pointer slot.  The old bridge wrote only Set(void*), so
++    // a native parameter table continued to expose the game's packed R11
++    // resource to the pre-NR observer even after we had prepared a FP16
++    // carrier.  Always save and restore both views, and write both views for
++    // the bridge hand-off below.
++    auto getOriginalD3D12Resource = [](NVSDK_NGX_Parameter* parameters, const char* name,
++                                       ID3D12Resource** outResource)
++    {
++        if (parameters == nullptr || name == nullptr || outResource == nullptr)
++            return false;
++
++        *outResource = nullptr;
++        return parameters->Get(name, outResource) == NVSDK_NGX_Result_Success && *outResource != nullptr;
++    };
++
++    auto setBridgeD3D12Resource = [](NVSDK_NGX_Parameter* parameters, const char* name, ID3D12Resource* resource)
++    {
++        if (parameters == nullptr || name == nullptr)
++            return;
++
++        // Typed first is important for the native D3D12 table.  The untyped
++        // write keeps compatibility with OptiScaler's internal table and
++        // with older NGX consumers that read the legacy pointer slot.
++        parameters->Set(name, resource);
++        parameters->Set(name, static_cast<void*>(resource));
++    };
++
+     ID3D11Resource* restoreParamColor = nullptr;
+     ID3D11Resource* restoreParamMv = nullptr;
+     ID3D11Resource* restoreParamOutput = nullptr;
+@@ -354,6 +436,13 @@ bool IFeature_Dx11wDx12::Evaluate(ID3D11DeviceContext* InDeviceContext, NVSDK_NG
+     ID3D11Resource* restoreParamExposure = nullptr;
+     ID3D11Resource* restoreParamReactive = nullptr;
+ 
++    ID3D12Resource* restoreParamColor12 = nullptr;
++    ID3D12Resource* restoreParamMv12 = nullptr;
++    ID3D12Resource* restoreParamOutput12 = nullptr;
++    ID3D12Resource* restoreParamDepth12 = nullptr;
++    ID3D12Resource* restoreParamExposure12 = nullptr;
++    ID3D12Resource* restoreParamReactive12 = nullptr;
++
+     const bool hasRestoreParamColor =
+         getOriginalNgxResource(InParameters, NVSDK_NGX_Parameter_Color, &restoreParamColor);
+     const bool hasRestoreParamMv =
+@@ -367,6 +456,19 @@ bool IFeature_Dx11wDx12::Evaluate(ID3D11DeviceContext* InDeviceContext, NVSDK_NG
+     const bool hasRestoreParamReactive = getOriginalNgxResource(
+         InParameters, NVSDK_NGX_Parameter_DLSS_Input_Bias_Current_Color_Mask, &restoreParamReactive);
+ 
++    const bool hasRestoreParamColor12 =
++        getOriginalD3D12Resource(InParameters, NVSDK_NGX_Parameter_Color, &restoreParamColor12);
++    const bool hasRestoreParamMv12 =
++        getOriginalD3D12Resource(InParameters, NVSDK_NGX_Parameter_MotionVectors, &restoreParamMv12);
++    const bool hasRestoreParamOutput12 =
++        getOriginalD3D12Resource(InParameters, NVSDK_NGX_Parameter_Output, &restoreParamOutput12);
++    const bool hasRestoreParamDepth12 =
++        getOriginalD3D12Resource(InParameters, NVSDK_NGX_Parameter_Depth, &restoreParamDepth12);
++    const bool hasRestoreParamExposure12 =
++        getOriginalD3D12Resource(InParameters, NVSDK_NGX_Parameter_ExposureTexture, &restoreParamExposure12);
++    const bool hasRestoreParamReactive12 = getOriginalD3D12Resource(
++        InParameters, NVSDK_NGX_Parameter_DLSS_Input_Bias_Current_Color_Mask, &restoreParamReactive12);
++
+     ID3D11ShaderResourceView* restoreSRVs[D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT] = {};
+     ID3D11SamplerState* restoreSamplerStates[D3D11_COMMONSHADER_SAMPLER_SLOT_COUNT] = {};
+     ID3D11Buffer* restoreCBVs[D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT] = {};
+@@ -447,7 +549,19 @@ bool IFeature_Dx11wDx12::Evaluate(ID3D11DeviceContext* InDeviceContext, NVSDK_NG
+         ID3D12Resource* carrierColor = dx11Color.Dx12Resource;
+         const auto carrierColorDesc = carrierColor->GetDesc();
+ 
+-        if (carrierColorDesc.Format == DXGI_FORMAT_R10G10B10A2_UNORM)
++        // The interop texture may retain a packed or typeless scene-color
++        // format (the current Genshin path reports R8G8B8A8_TYPELESS, enum
++        // value 27; older paths used R10/R11).  The RTX30 DLSS-NR model
++        // accepts a four-channel FP16 carrier, while native DLSS SR can still
++        // consume the original packed resource.  Promote every ambiguous
++        // packed form before the observer sees Feature 1; in particular this
++        // turns the otherwise rejected typeless R8 contract into FP16.
++        const bool packedHdrColor = carrierColorDesc.Format == DXGI_FORMAT_R8G8B8A8_TYPELESS ||
++                                    carrierColorDesc.Format == DXGI_FORMAT_R11G11B10_FLOAT ||
++                                    carrierColorDesc.Format == DXGI_FORMAT_R10G10B10A2_UNORM ||
++                                    carrierColorDesc.Format == DXGI_FORMAT_R10G10B10A2_TYPELESS;
++
++        if (packedHdrColor)
+         {
+             if (PreNrColorTransfer == nullptr)
+             {
+@@ -479,21 +593,88 @@ bool IFeature_Dx11wDx12::Evaluate(ID3D11DeviceContext* InDeviceContext, NVSDK_NG
+             if (!reportedPreNrColorTransfer)
+             {
+                 reportedPreNrColorTransfer = true;
+-                LOG_INFO("Pre-NR carrier color promoted from R10G10B10A2_UNORM to R16G16B16A16_FLOAT");
++                LOG_INFO("Pre-NR carrier color promoted from packed HDR format {} to R16G16B16A16_FLOAT",
++                         static_cast<int>(carrierColorDesc.Format));
+             }
+         }
+ 
+-        InParameters->Set(NVSDK_NGX_Parameter_Color, (void*) carrierColor);
+-        InParameters->Set(NVSDK_NGX_Parameter_MotionVectors, (void*) dx11Mv.Dx12Resource);
+-        InParameters->Set(NVSDK_NGX_Parameter_Output, (void*) dx11Out.Dx12Resource);
+-        InParameters->Set(NVSDK_NGX_Parameter_Depth, (void*) dx11Depth.Dx12Resource);
++        ID3D12Resource* carrierOutput = dx11Out.Dx12Resource;
++        const auto gameOutputDesc = carrierOutput->GetDesc();
++        const bool useFp16OutputCarrier = gameOutputDesc.Format == DXGI_FORMAT_R8G8B8A8_TYPELESS ||
++                                          gameOutputDesc.Format == DXGI_FORMAT_R8G8B8A8_UNORM ||
++                                          gameOutputDesc.Format == DXGI_FORMAT_R11G11B10_FLOAT ||
++                                          gameOutputDesc.Format == DXGI_FORMAT_R10G10B10A2_UNORM ||
++                                          gameOutputDesc.Format == DXGI_FORMAT_R10G10B10A2_TYPELESS;
++
++        if (useFp16OutputCarrier)
++        {
++            if (DlssOutputTransfer == nullptr)
++            {
++                DlssOutputTransfer = std::make_unique<FT_Dx12>("Genshin DLSS/NR FP16 output carrier",
++                                                               _dx11on12Device,
++                                                               DXGI_FORMAT_R16G16B16A16_FLOAT);
++            }
++
++            const auto carrierMatchesOutput = [&]()
++            {
++                if (!DlssOutputTransfer->CanRender())
++                    return false;
++
++                const auto carrierDesc = DlssOutputTransfer->Buffer()->GetDesc();
++                return carrierDesc.Width == gameOutputDesc.Width && carrierDesc.Height == gameOutputDesc.Height &&
++                       carrierDesc.Format == DXGI_FORMAT_R16G16B16A16_FLOAT;
++            }();
++
++            if (!DlssOutputTransfer->IsInit() ||
++                (!carrierMatchesOutput &&
++                 !DlssOutputTransfer->CreateBufferResource(_dx11on12Device, carrierOutput,
++                                                            D3D12_RESOURCE_STATE_UNORDERED_ACCESS)))
++            {
++                LOG_ERROR("DLSS/NR FP16 output carrier creation failed");
++                break;
++            }
++
++            DlssOutputTransfer->SetBufferState(cmdList, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
++            carrierOutput = DlssOutputTransfer->Buffer();
++
++            static bool reportedFp16OutputCarrier = false;
++            if (!reportedFp16OutputCarrier)
++            {
++                reportedFp16OutputCarrier = true;
++                LOG_INFO("DLSS/NR output redirected from format {} to R16G16B16A16_FLOAT; completed output will be "
++                         "encoded back before D3D11 copy-back",
++                         static_cast<int>(gameOutputDesc.Format));
++            }
++        }
++
++        setBridgeD3D12Resource(InParameters, NVSDK_NGX_Parameter_Color, carrierColor);
++        setBridgeD3D12Resource(InParameters, NVSDK_NGX_Parameter_MotionVectors, dx11Mv.Dx12Resource);
++        setBridgeD3D12Resource(InParameters, NVSDK_NGX_Parameter_Output, carrierOutput);
++        setBridgeD3D12Resource(InParameters, NVSDK_NGX_Parameter_Depth, dx11Depth.Dx12Resource);
+ 
+         if (!AutoExposure() && dx11Exp.Dx12Resource != nullptr)
+-            InParameters->Set(NVSDK_NGX_Parameter_ExposureTexture, (void*) dx11Exp.Dx12Resource);
++            setBridgeD3D12Resource(InParameters, NVSDK_NGX_Parameter_ExposureTexture, dx11Exp.Dx12Resource);
+ 
+         if (!Config::Instance()->DisableReactiveMask.value_or(false) && dx11Reactive.Dx12Resource != nullptr)
+-            InParameters->Set(NVSDK_NGX_Parameter_DLSS_Input_Bias_Current_Color_Mask,
+-                              (void*) dx11Reactive.Dx12Resource);
++            setBridgeD3D12Resource(InParameters, NVSDK_NGX_Parameter_DLSS_Input_Bias_Current_Color_Mask,
++                                   dx11Reactive.Dx12Resource);
++
++        static bool reportedBridgeResourceFormats = false;
++        if (!reportedBridgeResourceFormats)
++        {
++            reportedBridgeResourceFormats = true;
++            const auto observedColor = [&]() -> ID3D12Resource*
++            {
++                ID3D12Resource* value = nullptr;
++                InParameters->Get(NVSDK_NGX_Parameter_Color, &value);
++                return value;
++            }();
++            LOG_INFO("D3D11 bridge carrier resources: sourceFmt={} carrierFmt={} outputFmt={} typedColor={:p}",
++                     static_cast<int>(carrierColorDesc.Format),
++                     carrierColor == nullptr ? -1 : static_cast<int>(carrierColor->GetDesc().Format),
++                     carrierOutput == nullptr ? -1 : static_cast<int>(carrierOutput->GetDesc().Format),
++                     static_cast<void*>(observedColor));
++        }
+ 
+         LOG_DEBUG("Dispatch!!");
+         dx12EvalResult = dx12Feature->Evaluate(cmdList, InParameters);
+@@ -523,8 +704,50 @@ bool IFeature_Dx11wDx12::Evaluate(ID3D11DeviceContext* InDeviceContext, NVSDK_NG
+             DlssNr::ProbeD3D11(Dx11Device);
+         }
+ 
++        if (dx12EvalResult && useFp16OutputCarrier)
++        {
++            // The old RTX30 addon can execute either NR -> SR or SR -> NR on
++            // this FP16 output. Preserve the exact result by writing it to the
++            // game's typeless R8 resource only after the selected chain has
++            // completed. The UNORM UAV view is the same numeric contract that
++            // native DLSS used when it wrote this resource directly.
++            DlssOutputTransfer->SetBufferState(cmdList, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
++            ResourceBarrier(cmdList, dx11Out.Dx12Resource, D3D12_RESOURCE_STATE_COMMON,
++                            D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
++
++            const bool outputTransferSucceeded =
++                DlssOutputTransfer->Dispatch(cmdList, carrierOutput, dx11Out.Dx12Resource);
++
++            ResourceBarrier(cmdList, dx11Out.Dx12Resource, D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
++                            D3D12_RESOURCE_STATE_COMMON);
++            DlssOutputTransfer->SetBufferState(cmdList, D3D12_RESOURCE_STATE_COMMON);
++
++            if (!outputTransferSucceeded)
++            {
++                LOG_ERROR("DLSS/NR FP16 output encoding failed");
++                dx12EvalResult = false;
++                break;
++            }
++        }
++
+     } while (false);
+ 
++    // Clear/update the typed D3D12 slots first, then restore the original
++    // D3D11/legacy slots.  This prevents a promoted carrier from remaining in
++    // a native table after the call and leaking into the next frame.
++    InParameters->Set(NVSDK_NGX_Parameter_Color,
++                      hasRestoreParamColor12 ? restoreParamColor12 : static_cast<ID3D12Resource*>(nullptr));
++    InParameters->Set(NVSDK_NGX_Parameter_MotionVectors,
++                      hasRestoreParamMv12 ? restoreParamMv12 : static_cast<ID3D12Resource*>(nullptr));
++    InParameters->Set(NVSDK_NGX_Parameter_Output,
++                      hasRestoreParamOutput12 ? restoreParamOutput12 : static_cast<ID3D12Resource*>(nullptr));
++    InParameters->Set(NVSDK_NGX_Parameter_Depth,
++                      hasRestoreParamDepth12 ? restoreParamDepth12 : static_cast<ID3D12Resource*>(nullptr));
++    InParameters->Set(NVSDK_NGX_Parameter_ExposureTexture,
++                      hasRestoreParamExposure12 ? restoreParamExposure12 : static_cast<ID3D12Resource*>(nullptr));
++    InParameters->Set(NVSDK_NGX_Parameter_DLSS_Input_Bias_Current_Color_Mask,
++                      hasRestoreParamReactive12 ? restoreParamReactive12 : static_cast<ID3D12Resource*>(nullptr));
++
+     if (hasRestoreParamColor)
+         InParameters->Set(NVSDK_NGX_Parameter_Color, (void*) restoreParamColor);
+ 
+diff --git a/OptiScaler/upscalers/IFeature_Dx11wDx12.h b/OptiScaler/upscalers/IFeature_Dx11wDx12.h
+index cb08bd72..16c2b269 100644
+--- a/OptiScaler/upscalers/IFeature_Dx11wDx12.h
++++ b/OptiScaler/upscalers/IFeature_Dx11wDx12.h
+@@ -43,6 +43,11 @@ class IFeature_Dx11wDx12 : public virtual IFeature_Dx11
+     // or R11G11B10, so this pass promotes color before the NGX carrier call.
+     std::unique_ptr<FT_Dx12> PreNrColorTransfer = nullptr;
+ 
++    // The RTX30 NR addon accepts FP16 as an output contract in both chain
++    // orders. Keep DLSS/NR on this carrier when the game's shared output is
++    // typeless R8, then encode the completed result back into that output.
++    std::unique_ptr<FT_Dx12> DlssOutputTransfer = nullptr;
++
+     Dx11WithDx12::D3D11_TEXTURE2D_RESOURCE_C dx11Color = {};
+     Dx11WithDx12::D3D11_TEXTURE2D_RESOURCE_C dx11Mv = {};
+     Dx11WithDx12::D3D11_TEXTURE2D_RESOURCE_C dx11Depth = {};
