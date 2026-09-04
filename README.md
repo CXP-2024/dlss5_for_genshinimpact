@@ -31,7 +31,7 @@ v1.1 和 v1.2 是两个并列版本，请按需要选择并放在相互独立的
 | 版本 | DLSS5 NR 的位置 | 适合人群 | 当前显卡范围 |
 | --- | --- | --- | --- |
 | v1.1 后置 NR 版 | 原始 DLSS 已经得到输出帧后，再在输出分辨率执行 NR；NR 本身不承担低分辨率超分 | 希望保留原来效果，或不需要 v1.2“低分辨率 NR 后再超分”的用户 | RTX 50；RTX 40 按下文替换专用 NR 模型 |
-| v1.2 前置 NR 超分版 | 先在低渲染分辨率执行 DLSS5 NR，再由原始 DLSS Super Resolution 放大到输出分辨率 | 希望降低 NR 工作分辨率、使用新版前置超分链路的用户 | 当前完整包只验证 RTX 50 |
+| v1.2 前置 NR 超分版 | 先在低渲染分辨率执行 DLSS5 NR，再由原始 DLSS Super Resolution 放大到输出分辨率 | 希望降低 NR 工作分辨率、使用新版前置超分链路的用户 | 当前完整包只验证 RTX 50，40系请自行尝试 |
 
 ## v1.1：后置 NR 版（有问题进q 1107530312 联系）
 
@@ -56,11 +56,11 @@ v1.2 把 DLSS5 Neural Rendering 放到低分辨率阶段，然后把 NR 结果�
 - 7z 解压密码：`yuanshenqidong`
 - 7z 已启用 AES 内容加密与文件名加密，密码错误时无法查看目录结构
 
-v1.2 当前完整包只验证 RTX 50。不要把 v1.1 的 `dlss5-dx11-bridge`、RenoDX 后置 NR Add-on 或 RTX 40 模型直接覆盖到 v1.2 目录。
+v1.2 当前完整包只验证 RTX 50。RTX 40系可自行尝试。
 
 ### RTX 40 系列专用 DLSS NR 模型
 
-以下替换方法用于 v1.1。如果显卡是 RTX 40 系列，请额外下载 RHI 提供的 RTX40 专用 `nvngx_dlssnr.dll`，不要直接使用 v1.1 完整包内的默认 NR 模型：
+以下替换方法用于 v1.1, v1.2版本请自行尝试，暂时未验证。如果显卡是 RTX 40 系列，请额外下载 RHI 提供的 RTX40 专用 `nvngx_dlssnr.dll`，不要直接使用 v1.1 完整包内的默认 NR 模型：
 
 - [Google Drive 下载](https://drive.google.com/file/d/1Ztmm0oSlFRQfNvbNN8aav11w-WriCWCA/view?usp=sharing)
 - [百度网盘下载](https://pan.baidu.com/s/176qWSQ4eiyXjtHdyQb_iCw?pwd=jhfk)（提取码：`jhfk`）
