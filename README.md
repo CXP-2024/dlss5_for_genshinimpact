@@ -30,7 +30,7 @@ v1.1 和 v1.2 是两个并列版本，请按需要选择并放在相互独立的
 
 | 版本 | DLSS5 NR 的位置 | 适合人群 | 当前显卡范围 |
 | --- | --- | --- | --- |
-| v1.1 后置 NR 版 | 原始 DLSS 已经得到输出帧后，再在输出分辨率执行 NR；NR 本身不承担低分辨率超分 | 希望保留原来效果，或不需要 v1.2“低分辨率 NR 后再超分”的用户 | RTX 50；RTX 40 按下文替换专用 NR 模型 |
+| v1.1 后置 NR 版 | 原始 DLSS 已经得到输出帧后，再在输出分辨率执行 NR；NR 本身不承担低分辨率超分 | 希望保留原来效果，或不需要 v1.2“低分辨率 NR 后再超分”的用户 | RTX 50；RTX 40, 30 按下文替换专用 NR 模型 |
 | v1.2 前置 NR 超分版 | 先在低渲染分辨率执行 DLSS5 NR，再由原始 DLSS Super Resolution 放大到输出分辨率 | 希望降低 NR 工作分辨率、使用新版前置超分链路的用户 | 当前完整包只验证 RTX 50，40系请自行尝试 |
 
 ## v1.1：后置 NR 版（有问题进q 1107530312 联系）
@@ -58,13 +58,12 @@ v1.2 把 DLSS5 Neural Rendering 放到低分辨率阶段，然后把 NR 结果�
 
 v1.2 当前完整包只验证 RTX 50。RTX 40系可自行尝试。
 
-### RTX 40 系列专用 DLSS NR 模型
+### RTX 40，30 系列专用 DLSS NR 模型
 
-以下替换方法用于 v1.1, v1.2版本请自行尝试，暂时未验证。如果显卡是 RTX 40 系列，请额外下载 RHI 提供的 RTX40 专用 `nvngx_dlssnr.dll`，不要直接使用 v1.1 完整包内的默认 NR 模型：
+以下替换方法用于 v1.1, v1.2版本请自行尝试，暂时未验证。如果显卡是 RTX 40 或30 系列，请额外下载 RHI 提供的 RTX40或30 专用 `nvngx_dlssnr.dll`，不要直接使用 v1.1 完整包内的默认 NR 模型：
 
-- [Google Drive 下载](https://drive.google.com/file/d/1Ztmm0oSlFRQfNvbNN8aav11w-WriCWCA/view?usp=sharing)
-- [百度网盘下载](https://pan.baidu.com/s/176qWSQ4eiyXjtHdyQb_iCw?pwd=jhfk)（提取码：`jhfk`）
-
+- [Google Drive 下载](https://drive.google.com/file/d/1ijpMYWjmfPUvOvtoST1xHB73ZXPNlAyq/view?usp=sharing)
+- [百度网盘下载](https://pan.baidu.com/s/1GSp99MEpuf7BaDbueYqmlA?pwd=ycsu)（提取码：`ycsu`）
 解压后，用其中的 `nvngx_dlssnr.dll` 替换：
 
 ```text
@@ -75,7 +74,7 @@ DLSS5_GI_Ready\payload\ReShade\reshade-shaders\Addons\nvngx_dlssnr.dll
 
 ## 报错闪退-进不去原神-进去了画面未生效可能原因
 
-1. 请确保自己的系统是window11 24H及以上系统， 如不是请更新系统至最新（win10请升级至win11）。请确保你的显卡是Nvidia显卡的40系或者50系。请确保你使用的压缩包来源与此处的Google云盘或者百度网盘链接一致。请确保解压后放到任意 **英文路径下**，不要放在带有中文或者空格或者特殊字符的路径下*
+1. 请确保自己的系统是window11 24H及以上系统， 如不是请更新系统至最新（win10请升级至win11）。请确保你的显卡是Nvidia显卡的30，40系或者50系。请确保你使用的压缩包来源与此处的Google云盘或者百度网盘链接一致。请确保解压后放到任意 **英文路径下**，不要放在带有中文或者空格或者特殊字符的路径下*
 2. 请在第一次启动前删除或卸载除当前压缩包以外的所有你安装过的第三方内容（如第三方游戏目录注入式启动器，Reshade组件，RHI组件等等），保证游戏目录文件夹处于干净状态，防止与DLSS5启动冲突。
 3. 首先关闭你的所有杀毒软件，包括但不限于毒枭360，毒王电脑管家，毒霸金山... 其次检查是否插件被windows拦截了，具体按在win键，搜索安全，进入到windows安全中心，找到如下页面是否把UnlockerStub.dll给拦截了，需要允许其使用这个程序
 ![alt text](docs/images/fix_stub.dll.png)
