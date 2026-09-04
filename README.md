@@ -1,110 +1,113 @@
-# 原神 DLSS5 一键包
+# 原神 DLSS5 一键包（无 GIMI）
 
-## 目录
+当前版本为 **v1.2 前置神经渲染超分版（RTX 50 测试版）**。它把 DLSS5 Neural Rendering 放在低分辨率阶段运行，再交给原始 DLSS Super Resolution 放大；不需要 GIMI。
 
-- [最新版本 v1.1](#最新版本v11)
-- [RTX 40 系列专用 DLSS NR 模型](#rtx-40-系列专用-dlss-nr-模型)
-- [旧版本 v1.0](#旧版本v10)
-- [失败排查！！！一定要看！一定要看！一定要看！！！](#报错闪退-进不去原神-进去了画面未生效可能原因)
-- [屏幕闪烁说明](#dlss5刚进入时可能会有屏幕闪烁)
-- [调参示例](#调参示例源于b站up主ZHFred)
-- [解压后的目录](#解压后的目录)
-- [工作原理](#工作原理)
-- [引用的开源项目](#引用的开源项目)
+> 本项目是第三方实验性整合，不是 NVIDIA、HoYoverse、ReShade 或各上游项目的官方产品。游戏、驱动和预览运行时更新后可能失效，请自行评估使用风险。
 
-1. 务必下载完整文件夹包，并将其放到任意 **英文路径下。不要放在带有中文路径或者空格的路径下** 
-2. 只双击 `启动_DLSS5.bat`。
-3. 第一次选择 `YuanShen.exe`，以后再次双击即可。
-4. 如果不成功，请看[失败排查！！！一定要看！一定要看！一定要看！！！](#报错闪退-进不去原神-进去了画面未生效可能原因)
+## v1.2 下载
 
-压缩包已包含运行所需组件：ReShade、OptiScaler、FSR Bridge、DLSS5 bridge、RenoDX、FPS Unlocker，以及 `nvngx_dlss.dll` 和 `nvngx_dlssnr.dll`。只需运行批处理文件，不需要打开 `.ps1`，也不需要改名 `dxgi.dll`/`d3d12.dll`。
+完整一键包正在等待维护者上传。新的 Google Drive 与百度网盘链接会在上传完成后补到这里；**不要把下方 v1.1 链接误当成 v1.2**。
 
-HDR 也已包含并默认启用：启动器会设置原神的 HDR 开关，包内带有 RenoDX 和 HDR shader。要看到真实 HDR 输出，还需要在 Windows 和显示器上开启 HDR；ReShade shader 只是随包提供，不会自动启用每一个效果。
+- Google Drive：待补充
+- 百度网盘：待补充
+- 文件名：`DLSS5_GI_Ready_v1.2_PreNR_RTX50_20260904.zip`
+- 文件大小：`231,988,270 bytes`（约 221.2 MiB）
+- SHA-256：`E1AF7783CE4A65A148633BAFE902E447D91DBE7C0660F1736320B638379D8FDE`
+- ZIP：标准 ZIP，无解压密码
 
-## 最新版本：v1.1 有问题进q 1107530312 联系
+GitHub 仓库只含源码、补丁、配置和可提交的小文件。由于体积与分发边界，直接下载仓库不能代替完整一键包；`nvngx_dlssnr.dll`、`nvngx_dlss.dll`、ReShade 和构建后的 OptiScaler 等运行文件不会提交到 GitHub。
 
-推荐下载 v1.1：已修复此前 RenoDX DLSS5 插件的显存泄漏问题，并更新 DLSS5/NR 模型组件。支持50系显卡。
+## 使用方法
 
-[失败排查！！！一定要看！一定要看！一定要看！！！](#报错闪退-进不去原神-进去了画面未生效可能原因)
+1. 解压完整 v1.2 ZIP 到固定目录，建议使用英文路径。
+2. 双击 `启动_DLSS5.bat`。
+3. 第一次选择 `YuanShen.exe` 或 `GenshinImpact.exe`；路径会保存，之后直接双击即可。
+4. 游戏内抗锯齿选择 **FSR2**，关闭垂直同步；渲染精度就是 NR 与 DLSS 的输入倍率。
+5. `Home` 打开 ReShade，`Insert` 打开 OptiScaler，`F6` 切换前置 NR。
 
-- [Google Drive 下载](https://drive.google.com/file/d/17LIscmrEGhJrlWnOdZNlRBFJotdHaOLf/view?usp=sharing)（不限速）
-- [百度网盘下载](https://pan.baidu.com/s/1tlxdX8iLNN9gCvEd5j2soQ?pwd=y95x)（国内访问方便，建议使用 SVIP 下载）
+不需要提前安装 GIMI、ReShade、OptiScaler、DLSS DLL 或 FPS Unlocker，完整一键包已经包含本配置所需组件。不要把它和 GIMI 版、v1.1 旧插件目录、其他 ReShade/RHI 注入包混在一起，也不要直接启动游戏 EXE。
 
-百度网盘提取码：`y95x`；7z 解压密码：`yuanshenqidong`。
+当前完整包按 RTX 50、Windows 11 24H2 和较新 NVIDIA 驱动准备。前置插件原说明建议 RTX 50 使用 615+ 驱动；RTX 40 所需运行时与本包不同，v1.2 尚未验证 RTX 40 替换方案。
 
-### RTX 40 系列专用 DLSS NR 模型
-
-如果显卡是 RTX 40 系列，请额外下载 RHI 提供的 RTX40 专用 `nvngx_dlssnr.dll`，不要直接使用完整包内的默认 NR 模型：
-
-- [Google Drive 下载](https://drive.google.com/file/d/1Ztmm0oSlFRQfNvbNN8aav11w-WriCWCA/view?usp=sharing)
-- [百度网盘下载](https://pan.baidu.com/s/176qWSQ4eiyXjtHdyQb_iCw?pwd=jhfk)（提取码：`jhfk`）
-
-解压后，用其中的 `nvngx_dlssnr.dll` 替换：
+## v1.2 实际链路
 
 ```text
-DLSS5_GI_Ready\payload\ReShade\reshade-shaders\Addons\nvngx_dlssnr.dll
+原神 DX11 低分辨率颜色 / 深度 / 运动向量
+  -> Dx11FsrBridge 捕获 FSR2 输入
+  -> OptiScaler dlss_12 创建私有 DX12 NGX 会话
+  -> 前置 NR 插件以 Feature 18 在渲染分辨率执行 DLSS5 Neural Rendering
+  -> 原始 DLSS Feature 1 从渲染分辨率放大到输出分辨率
+  -> 结果复制回 DX11
+  -> ReShade / UI 在最终游戏输出上继续处理
 ```
 
-只替换这个文件，其余插件均保持不变。
+这不是“原分辨率跑完 DLSS5 后再缩放”。测试记录确认输入为 `960x540`、NR Feature 18 输出仍为 `960x540`，随后原始 DLSS 输出 `1920x1080`；连续 5400 个 NR 帧成功，测试段帧率约 160 FPS。
 
-## 报错闪退-进不去原神-进去了画面未生效可能原因
+v1.2 不再加载 v1.1 的 `dlss5-dx11-bridge` 与 RenoDX 后置 NR add-on，也把 OptiScaler 内置 `[DlssNr]` 设为关闭，确保一帧只执行一次前置 NR。
 
-1. 请确保自己的系统是window11 24H及以上系统， 如不是请更新系统至最新（win10请升级至win11）。请确保你的显卡是Nvidia显卡的40系或者50系。请确保你使用的压缩包来源与此处的Google云盘或者百度网盘链接一致。请确保解压后放到任意 **英文路径下**，不要放在带有中文或者空格或者特殊字符的路径下*
-2. 请在第一次启动前删除或卸载除当前压缩包以外的所有你安装过的第三方内容（如第三方游戏目录注入式启动器，Reshade组件，RHI组件等等），保证游戏目录文件夹处于干净状态，防止与DLSS5启动冲突。
-3. 首先关闭你的所有杀毒软件，包括但不限于毒枭360，毒王电脑管家，毒霸金山... 其次检查是否插件被windows拦截了，具体按在win键，搜索安全，进入到windows安全中心，找到如下页面是否把UnlockerStub.dll给拦截了，需要允许其使用这个程序
-![alt text](docs/images/fix_stub.dll.png)
-4. 检查驱动是否为新版，目前已验证版本610.88可以正常启动使用，更高的版本兼容性更强，所以推荐更新到最新
-5. 检查帧率限制是否已经被解除，如果没有，请务必在系统托盘中退出unlockfps_nc这个程序，然后重新双击启动DLSS5
-6. 尽量不要把原神安装在系统盘的Program Files 目录，启动可能会有权限问题，可尝试使用管理员权限启动DLSS5, 或者将原神本体安装在根盘或者其它数据盘内。
-7. 不要开启nvidai app里面的插帧功能！！！且原神内部的抗锯齿选项请使用FSR2！！！因为我们通过这个接口转成DLSS算法抗锯齿。进入游戏后可以试着调一下渲染倍率，其中倍率0.999相当于DLAA，0.2 就是超级性能档的DLSS. 关闭垂直同步，关闭动态模糊，关闭角色动态高精度。
-8. 最后，请尝试重启游戏，重启系统看看是否解决。
-![](docs/images/nv.png)
+## 本版解决的问题
 
-## DLSS5刚进入时可能会有屏幕闪烁
+- ReShade 会包装私有 D3D12 创建设备调用，旧路径会在 `ReShade64.dll` 中崩溃。兼容构建只在创建私有 DLSS-on-DX12 设备期间解包 ReShade adapter 并临时绕过其 `D3D12CreateDevice` detour，完成后立即恢复；不修改系统 DLL。
+- 无 GIMI 路径原先会先初始化原生 D3D11 NGX，得到只能按严格类型读取的参数表，前置插件因此看不到私有 D3D12 颜色、深度和运动向量。v1.2 在 `dlss_12` 路径延迟 D3D11 NGX 初始化，使用 OptiScaler 自有参数表完成 D3D12 资源交接，再由 D3D12 Feature 自行初始化原生 NGX。
 
-这是正常的，大概率是参数没有调好，可以自行配一下
-![alt text](docs/images/canshu.jpg)
+对应 OptiScaler 源码补丁见 [`src/patches/OptiScaler-DLSSOn12-pre-NR.patch`](src/patches/OptiScaler-DLSSOn12-pre-NR.patch)。
 
-## 调参示例源于b站up主ZHFred
-![](docs/images/example.jpg)
-![](docs/images/dlss5exp.png)
+## 来源与修改说明
 
-## 解压后的目录
+前置 NR 文件来自用户提供的 `B站野生的装机宅 DLSS5-AI渲染超分版-RTX50.zip`，压缩包及插件界面署名为 Bilibili UP 主 **“野生的装机宅”**。
 
-解压完成后，根目录应类似下图：
+以下文件保持原二进制不变：
 
-![解压后的文件结构](docs/images/dlss5-package-layout.png)
+- `nr-before-sr.zh-CN.addon64`
+- `nrchain_nvngx.dll`
+- RTX 50 测试版 `nvngx_dlssnr.dll`
 
-## 工作原理
+本项目做过的改动：
 
-原神本身是 DX11，DLSS5 插件需要 DX12 的 NGX 调用。启动器按固定顺序注入 ReShade、`Dx11FsrBridge.dll` 和 `OptiScaler.dll`：
+- 把 `nr_before_sr.ini` 默认 `Mode` 从 1 改为 2，即由“SR 后 NR”改为“低分辨率 NR 后原 DLSS 超分”；
+- 修改 OptiScaler 源码，加入上述无 GIMI 参数交接与 ReShade 私有 D3D12 兼容修复；
+- 修改 ReShade Add-on 搜索/早期加载配置、OptiScaler 固定配置和一键启动脚本；
+- 沿用 v1.1 已验证的 `Dx11FsrBridge.dll`、FPS Unlocker 与普通 ReShade runtime，v1.2 没有进一步改写这三者的二进制。
 
-1. Bridge 从 DX11 游戏帧中取得颜色、深度和运动向量，并建立一个内部 DX12 会话。
-2. OptiScaler 提供 DLSS4 兼容入口；DLSS5 bridge 将这次 DX12 NGX 调用交给 `nvngx_dlssnr.dll` 和 RenoDX DLSS5 插件。
-3. 神经渲染完成后，结果同步并复制回原神的 DX11 输出。
+原插件声明其 HDR 合成方法派生自 clshortfuse 的 RenoDX DLSS 5 Neural Rendering add-on（MIT）。完整说明、哈希和第三方声明见 [`ATTRIBUTION.txt`](release/portable-template/ATTRIBUTION.txt)、[`THIRD_PARTY_NOTICES.txt`](release/pre-nr/THIRD_PARTY_NOTICES.txt) 与 [`docs/REDISTRIBUTION.md`](docs/REDISTRIBUTION.md)。
 
-脚本每次启动都会把 ReShade 的 `AddonPath`、Shader 路径和 OptiScaler 路径改为压缩包当前位置。
+## 如何确认真的生效
 
-桥接插件还修复了启动崩溃：ReShade 可能会二次包装 Bridge 自建的 DX12 设备，造成虚表冲突。修复版在创建内部设备时临时绕过 ReShade 的设备 hook，并先还原原生 adapter，再恢复 hook；不修改系统 DLL。
+打开 ReShade Overlay 查看前置插件，正常状态应同时满足：
 
-GitHub 只保存源码和小型 release 文件；组件授权与重新分发注意事项见 `docs/REDISTRIBUTION.md`。
+- `signed feature 18 create ... Success`
+- `NR-before-SR evaluate succeeded` 持续增长
+- 输入/NR 分辨率小于输出分辨率，例如 `960x540 -> 960x540`，随后 DLSS 输出 `1920x1080`
 
-### 旧版本：v1.0
+只看到 Feature 1 evaluate 次数增长、不出现 Feature 18 成功帧，不代表 DLSS5 已生效。日志位置：
 
-如需兼容旧配置，可使用 v1.0。普通用户建议优先使用上面的 v1.1。
+- `payload\ReShade\reshade-shaders\Addons\pre-nr\nr-before-sr.log`
+- `payload\OptiScaler\OptiScaler.log`
+- `payload\Bridge\Dx11FsrBridge.log`
+- 游戏目录下 `ReShade.log`
 
-- [Google Drive 文件夹（v1.0）](https://drive.google.com/drive/folders/1VH2Vg4oAvD_12HBBRnA4xcjmpQUANo50?usp=sharing)
-- [百度网盘：GI.7z（v1.0）](https://pan.baidu.com/s/1T9EqgpNZ2kmBWLzr1P4ETQ?pwd=ysqd)（建议使用 SVIP 下载）
+## 常见问题
 
-百度网盘提取码：`ysqd`；7z 解压密码：`yuanshenqidong`。
+- 先退出游戏和系统托盘中的 `unlockfps_nc`，再重新双击启动；若解帧状态异常，重启系统后再试。
+- Windows 安全中心可能隔离 `UnlockerStub.dll`。只使用你确认来源和哈希的一键包，并自行决定是否允许。
+- NVIDIA App 插帧不要和本包同时启用。
+- HDR 下插件内置截图可能呈灰色或颜色偏差，这是截图路径的色彩空间问题；验证画面请优先使用系统截图工具。
+- 刚进入游戏时短暂闪烁通常与时序历史初始化有关；若持续闪烁，保留四份日志再反馈。
 
-如果解压后缺少 `UnlockerStub.dll`，请从 [GitHub 单独下载](https://github.com/CXP-2024/dlss5_for_genshinimpact/raw/refs/heads/main/release/fps-unlocker/UnlockerStub.dll)，放到解压包根目录，与 `启动_DLSS5.bat`、`unlockfps_nc.exe` 同级。只需补放这个文件，不要改名。
+## v1.1 旧版
 
+v1.1 是“原始 DLSS 输出后再执行 NR”的旧链路，保留用于回退，不是本页推荐的前置超分版。
 
-## 引用的开源项目
+- [Google Drive v1.1](https://drive.google.com/file/d/17LIscmrEGhJrlWnOdZNlRBFJotdHaOLf/view?usp=sharing)
+- [百度网盘 v1.1](https://pan.baidu.com/s/1tlxdX8iLNN9gCvEd5j2soQ?pwd=y95x)（提取码 `y95x`，7z 密码 `yuanshenqidong`）
 
-- [Genshin FSR Bridge](https://github.com/AizawaHikaru233/genshin_fsr_brigde)：拦截原神 DX11 的 FSR2 调用，准备颜色、深度和运动向量，并把超分请求转交给 OptiScaler。这里使用它的 `Dx11FsrBridge.dll` 作为 DX11 输入桥接；本项目没有改写其核心 FSR 算法，只调整了组件目录和加载顺序。
-- [DLSS5 DX11 Bridge](https://github.com/NIGos/dlss5-dx11-bridge)：把 DX11 的 NGX 请求复制到自建 DX12 会话，使 DLSS5 Neural Rendering 插件能够接收到调用，再将结果复制回游戏输出。本项目基于其源码编译，并增加 ReShade 二次包装 D3D12 设备的兼容处理：创建内部设备时临时绕过 `D3D12CreateDevice` hook、还原原生 adapter，随后恢复 hook；具体见 [`LOCAL-CHANGES.md`](src/dlss5-dx11-bridge/LOCAL-CHANGES.md)。
-- [Genshin FPS Unlock](https://github.com/34736384/genshin-fps-unlock)：通过外部进程写入游戏帧率参数并启动游戏。本项目未改动其解锁算法，只将 `unlockfps_nc.exe`、`UnlockerStub.dll` 和配置写入流程整合进一键包。
+## 上游项目
 
-三个项目的组合关系是：FSR Bridge 提供 DX11 的输入资源，OptiScaler 提供 DLSS4 兼容入口，DLSS5 DX11 Bridge 将请求转入 DLSS5，FPS Unlocker 负责按配置启动并解锁帧率。
+- [Genshin FSR Bridge](https://github.com/AizawaHikaru233/genshin_fsr_brigde)
+- [OptiScaler DLSSNR fork](https://github.com/Dagherbou/OptiScaler_DLSSNR)
+- [OptiScaler](https://github.com/optiscaler/OptiScaler)
+- [ReShade](https://reshade.me/)
+- [Genshin FPS Unlock](https://github.com/34736384/genshin-fps-unlock)
+- [RenoDX](https://github.com/clshortfuse/renodx)
+
+源码许可证与快照说明见 `src/`、`licenses/` 和根目录 `NOTICE`。

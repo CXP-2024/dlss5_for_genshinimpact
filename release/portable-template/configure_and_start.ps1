@@ -106,10 +106,22 @@ $opti = Join-Path $payload 'OptiScaler\OptiScaler.dll'
 $addons = Join-Path $payload 'ReShade\reshade-shaders\Addons'
 $shaders = Join-Path $payload 'ReShade\reshade-shaders\Shaders'
 $textures = Join-Path $payload 'ReShade\reshade-shaders\Textures'
+$preNr = Join-Path $payload 'ReShade\reshade-shaders\Addons\pre-nr'
 $optiIni = Join-Path $payload 'OptiScaler\OptiScaler.ini'
+$preNrIni = Join-Path $preNr 'nr_before_sr.ini'
 $reshadeIni = Join-Path $gameDir 'ReShade.ini'
 
-foreach ($required in @($unlockerPath, $reshade, $bridge, $opti, (Join-Path $addons 'dlss5-dx11-bridge.addon64'), (Join-Path $addons 'renodx-dlss5.addon64'), (Join-Path $addons 'nvngx_dlssnr.dll'), (Join-Path $payload 'OptiScaler\nvngx_dlss.dll'))) {
+foreach ($required in @(
+    $unlockerPath,
+    $reshade,
+    $bridge,
+    $opti,
+    (Join-Path $preNr 'nr-before-sr.zh-CN.addon64'),
+    (Join-Path $preNr 'nrchain_nvngx.dll'),
+    (Join-Path $preNr 'nvngx_dlssnr.dll'),
+    $preNrIni,
+    (Join-Path $payload 'OptiScaler\nvngx_dlss.dll')
+)) {
     if (-not (Test-Path -LiteralPath $required -PathType Leaf)) { throw "Missing file: $required" }
 }
 
@@ -117,12 +129,33 @@ if (Test-Path -LiteralPath $reshadeIni -PathType Leaf) {
     $backup = "$reshadeIni.dlss5-backup"
     if (-not (Test-Path -LiteralPath $backup -PathType Leaf)) { Copy-Item -LiteralPath $reshadeIni -Destination $backup }
 }
-Set-IniValue -Path $reshadeIni -Section 'ADDON' -Key 'AddonPath' -Value ([IO.Path]::GetFullPath($addons))
+Set-IniValue -Path $reshadeIni -Section 'ADDON' -Key 'AddonPath' -Value ([IO.Path]::GetFullPath($preNr))
+Set-IniValue -Path $reshadeIni -Section 'ADDON' -Key 'DisabledAddons' -Value ''
+Set-IniValue -Path $reshadeIni -Section 'ADDON' -Key 'LoadFromDllMain' -Value 'nr-before-sr.zh-CN.addon64'
 Set-IniValue -Path $reshadeIni -Section 'GENERAL' -Key 'EffectSearchPaths' -Value ([IO.Path]::GetFullPath($shaders))
 Set-IniValue -Path $reshadeIni -Section 'GENERAL' -Key 'TextureSearchPaths' -Value ([IO.Path]::GetFullPath($textures))
+Set-IniValue -Path $reshadeIni -Section 'GENERAL' -Key 'IntermediateCachePath' -Value ([IO.Path]::GetFullPath((Join-Path $root 'state\ReShadeCache')))
+Set-IniValue -Path $reshadeIni -Section 'SCREENSHOT' -Key 'SavePath' -Value ([IO.Path]::GetFullPath((Join-Path $root 'state\Screenshots')))
 
 if (-not (Test-Path -LiteralPath $optiIni -PathType Leaf)) { throw "Missing OptiScaler.ini: $optiIni" }
+Set-IniValue -Path $optiIni -Section 'Upscalers' -Key 'Dx11Upscaler' -Value 'dlss_12'
+Set-IniValue -Path $optiIni -Section 'Inputs' -Key 'EnableFsr2Inputs' -Value 'true'
+Set-IniValue -Path $optiIni -Section 'Inputs' -Key 'UseFsr2Dx11Inputs' -Value 'true'
+Set-IniValue -Path $optiIni -Section 'Inputs' -Key 'UseFsr2Inputs' -Value 'true'
 Set-IniValue -Path $optiIni -Section 'Libraries' -Key 'OptiDllPath' -Value ([IO.Path]::GetFullPath((Join-Path $payload 'OptiScaler')))
+Set-IniValue -Path $optiIni -Section 'Libraries' -Key 'NvngxDlssPath' -Value ([IO.Path]::GetFullPath((Join-Path $payload 'OptiScaler\nvngx_dlss.dll')))
+Set-IniValue -Path $optiIni -Section 'Libraries' -Key 'NvngxFeaturePath' -Value ([IO.Path]::GetFullPath((Join-Path $payload 'OptiScaler')))
+Set-IniValue -Path $optiIni -Section 'Plugins' -Key 'LoadReShade' -Value 'false'
+Set-IniValue -Path $optiIni -Section 'Hooks' -Key 'SkipD3D11DeviceVTableHooks' -Value 'false'
+Set-IniValue -Path $optiIni -Section 'DlssNr' -Key 'Enabled' -Value 'false'
+Set-IniValue -Path $optiIni -Section 'Log' -Key 'LogToFile' -Value 'true'
+Set-IniValue -Path $optiIni -Section 'Log' -Key 'LogLevel' -Value '2'
+Set-IniValue -Path $optiIni -Section 'Log' -Key 'LogFileName' -Value ([IO.Path]::GetFullPath((Join-Path $payload 'OptiScaler\OptiScaler.log')))
+Set-IniValue -Path $preNrIni -Section 'NRBeforeSR' -Key 'Enabled' -Value '1'
+Set-IniValue -Path $preNrIni -Section 'NRBeforeSR' -Key 'Mode' -Value '2'
+
+New-Item -ItemType Directory -Force -Path (Join-Path $root 'state\ReShadeCache') | Out-Null
+New-Item -ItemType Directory -Force -Path (Join-Path $root 'state\Screenshots') | Out-Null
 
 $config = [ordered]@{
     GamePath = $gameExe
@@ -148,4 +181,5 @@ $config = [ordered]@{
 }
 $config | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $fpsConfigPath -Encoding UTF8
 Write-Host "Configuration complete: $gameExe" -ForegroundColor Green
+Write-Host 'v1.2 chain: render-resolution DLSS5 NR -> original DLSS Super Resolution -> ReShade/UI' -ForegroundColor Cyan
 Start-Process -FilePath $unlockerPath -WorkingDirectory $root

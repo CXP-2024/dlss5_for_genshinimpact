@@ -1,16 +1,19 @@
-# 重新分发边界
+# 重新分发与来源边界
 
-本仓库只提交源码、许可证和可确认可分发的小型组件。以下文件不提交：
+本仓库提交源码、补丁、说明、许可证和小型 release 文件，不提交完整运行包中的大型/受限组件。
 
-| 组件 | 原因 | 当前本机大小 |
-| --- | --- | ---: |
-| `nvngx_dlssnr.dll` | NVIDIA 预览模型/运行时，来源和许可受限 | 158.16 MiB |
-| `nvngx_dlss.dll` | NVIDIA NGX runtime，随 OptiScaler/NVIDIA SDK 许可分发 | 56.23 MiB |
-| `libxess.dll` | XeSS runtime，本 DLSS-only 路径不需要 | 74.19 MiB |
-| `ReShade64.dll` | ReShade runtime，应从官方 Add-on 安装器获取 | 5.33 MiB |
-| `OptiScaler.dll` | 第三方项目发行文件，建议从其 release 获取 | 约 25 MiB |
-| `renodx-dlss5.addon64` | 未确认本项目具有再分发授权 | 约 0.37 MiB |
+| 组件 | GitHub 状态 | 说明 |
+| --- | --- | --- |
+| `nvngx_dlssnr.dll` | 不提交 | NVIDIA RTX 50 预览运行时，165,840,496 bytes |
+| `nvngx_dlss.dll` | 不提交 | NVIDIA NGX runtime，58,956,400 bytes |
+| `ReShade64.dll` | 不提交 | 应从 ReShade 官方 Add-on 分发获取 |
+| `OptiScaler.dll` | 不提交 | 本项目补丁构建产物约 25 MiB；源码差异以 patch 提交 |
+| XeSS/FFX runtime | 不提交 | 来自各上游发行包，遵循各自许可 |
+| `nr-before-sr.zh-CN.addon64` | 提交 | 用户提供的装机宅压缩包内小型插件，二进制未修改；保留声明和哈希 |
+| `nrchain_nvngx.dll` | 提交 | 同上，二进制未修改 |
 
-`tools/Build-PortablePackage.ps1` 会从本机已取得的文件生成一个独立 ZIP，供维护者自行上传到 Google Drive。这个 ZIP 不属于 GitHub 仓库，且包含受限运行时；上传前请确认每个组件的再分发权限。不要把它或其中的大文件提交到 Git 历史。
+前置 NR 插件来源文件为 `B站野生的装机宅 DLSS5-AI渲染超分版-RTX50.zip`，署名 Bilibili UP 主“野生的装机宅”。本项目不主张其著作权，也没有对两个插件二进制进行反编译后重编译或二进制修改。
 
-源码目录保留各上游项目的许可证和 NOTICE。发布前请再次核对上游许可证、作者授权和下载来源。
+本项目修改的是：`nr_before_sr.ini` 的 Mode 1→2、OptiScaler 源码补丁、ReShade/OptiScaler 配置与一键启动脚本。原插件声明其 HDR 合成方法派生自 clshortfuse/RenoDX（MIT），声明副本在 `release/pre-nr/THIRD_PARTY_NOTICES.txt`。
+
+`tools/Build-PortablePackage.ps1` 从维护者本机已取得的文件生成完整 ZIP，ZIP 本身不进入 Git 历史。上传网盘前应再次核对各组件许可、作者授权、来源和哈希。

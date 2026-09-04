@@ -1,33 +1,33 @@
-# 安装与启动
+# v1.2 安装与启动
 
-> 普通用户请直接使用根目录 README 中的完整文件夹包和 `启动_DLSS5.bat`。本文只用于手动部署、排错或重新构建，不要与一键包混用。
+## 普通用户
 
-## 目录原则
+1. 从 README 的 v1.2 网盘链接下载完整 `DLSS5_GI_Ready_v1.2_PreNR_RTX50_20260904.zip`。链接待维护者上传后补充。
+2. 解压到固定目录，建议使用英文路径。
+3. 双击 `启动_DLSS5.bat`，第一次选择 `YuanShen.exe` 或 `GenshinImpact.exe`。
+4. 游戏内选择 FSR2 抗锯齿；渲染倍率决定 NR/DLSS 输入分辨率。
 
-建议把本仓库克隆到一个固定目录，例如 `D:\GenshinDLSS5Tutorial`。游戏目录只放 ReShade 的 `dxgi.dll`、ReShade 配置及其 Add-ons；教程仓库本身不需要放进游戏目录。
+完整 ZIP 已含 ReShade、OptiScaler 兼容构建、DX11 FSR Bridge、前置 NR 插件、DLSS/DLSSNR runtime 和 FPS Unlocker。无需提前安装 GIMI 或任一上述组件。
 
-## 组件
+GitHub 仓库不是可直接运行的一键包：大文件和受限 runtime 不在 Git 历史中。
 
-必须组件：
+## 启动脚本做什么
 
-1. ReShade Add-on 构建（官方安装器的 Add-on 版本）。
-2. `release/custom-bridge/dlss5-dx11-bridge.addon64` 与 `.cfg`。
-3. `release/configs/Dx11FsrBridge.dll` 与同目录的 `.ini`。
-4. OptiScaler 的 `OptiScaler.dll`。
-5. DLSS5 add-on 的 `renodx-dlss5.addon64`。
-6. `nvngx_dlssnr.dll` 与 OptiScaler 所需的 `nvngx_dlss.dll`。
-7. `release/fps-unlocker/unlockfps_nc.exe` 与 `UnlockerStub.dll`。
+脚本每次运行都会：
 
-将 2、5 放进 ReShade Add-ons 目录。将 3 中的 DLL 与 `.ini` 放在同一目录，只把 DLL 加到 FPS Unlocker 的 DLL 注入列表。模型 DLL 按对应项目的说明放置，不能用同名旧版本覆盖后不核对哈希。
+- 根据包当前位置重写 ReShade 的 Addon/Shader/Texture/Cache/Screenshot 路径；
+- 固定 `Dx11Upscaler=dlss_12` 与 FSR2 DX11 输入；
+- 固定前置插件 `Mode=2`；
+- 关闭 OptiScaler 内置 `[DlssNr]`，避免双重 NR；
+- 以 `ReShade64.dll -> Dx11FsrBridge.dll -> OptiScaler.dll` 顺序写入 FPS Unlocker 注入列表并启动游戏。
 
-## 启动顺序
+## 要求与冲突
 
-1. 用 FPS Unlocker 的设置选择 `YuanShen.exe`。
-2. 确认 AddonPath 和 DLL 列表全部来自当前目录，不含旧磁盘或其他机器的绝对路径。
-3. 只通过 `unlockfps_nc.exe` 启动。
-4. 在 ReShade Overlay 中确认桥接和 DLSS5 add-on 均为加载状态。
-5. 首次测试选择渲染倍率 `0.999`，再逐步尝试其他倍率。
+- v1.2 完整包面向 RTX 50 测试；前置插件原说明建议 NVIDIA 615+ 驱动。
+- 建议 Windows 11 24H2 或更新版本，并在 Windows/显示器内开启 HDR 才能看到 HDR 输出。
+- 不要与 GIMI 版、旧 v1.1 Add-ons、其他 ReShade/RHI 注入包混用。
+- 不要启用 NVIDIA App 帧生成。
 
-## 失败回退
+## 回退
 
-删除或重命名 `dlss5-dx11-bridge.addon64` 即可回到没有 DLSS5 桥接的路径。不要删除游戏文件；先保留日志供定位。
+退出游戏和系统托盘 `unlockfps_nc` 后，直接改用独立的 v1.1 文件夹或干净游戏启动方式。不要从 v1.2 目录中任意删除单个 DLL 后继续启动；先保留日志用于诊断。

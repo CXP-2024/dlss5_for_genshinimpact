@@ -1,28 +1,46 @@
-# 配置建议
+# v1.2 配置
 
-## 桥接配置
+一键脚本会固定关键配置，普通用户不需要手改。
 
-以 `examples/dlss5-dx11-bridge.cfg` 为起点：
+## OptiScaler
 
-- `stage=3`、`mode=2`：完整桥接路径。
-- `skip_game=1`：跳过会被覆盖的原生 DLSS evaluate，避免重复计算。
-- `reset_every=0`：保留时间性历史；只有诊断伪影时临时设为 `1`。
-- `pixels=0`：不要开启 CPU 回读，它会强制 GPU 同步并显著拖慢帧率。
-- `dred=0`：正常使用保持关闭；只在 D3D12 崩溃诊断时打开。
+```ini
+[Upscalers]
+Dx11Upscaler=dlss_12
 
-配置文件热加载，但地址/RVA 只对已验证的游戏版本有效。升级游戏后若菜单或渲染异常，应先禁用桥接并重新确认版本适配。
+[Inputs]
+EnableFsr2Inputs=true
+UseFsr2Dx11Inputs=true
+UseFsr2Inputs=true
 
-## ReShade / DLSS5
+[Plugins]
+LoadReShade=false
 
-使用带 Add-on 支持的 ReShade。DLSS5 add-on 的 Neural Rendering 开关由它自己的面板控制；桥接只负责把 DX11 的 NGX 调用送到 DX12 会话。
+[Hooks]
+SkipD3D11DeviceVTableHooks=false
 
-`0.999` 是渲染倍率菜单中的原生档位，用于 DLAA/原生输入测试；它不是“99.9% 的 DLSS 质量”。
+[DlssNr]
+Enabled=false
+```
 
-## 伪影排查
+`LoadReShade=false` 是因为普通 ReShade 已由 FPS Unlocker 独立注入；`[DlssNr] Enabled=false` 只关闭 OptiScaler 自带的后置 NR，外部前置插件仍在运行。
 
-先保持同一场景：
+## 前置 NR
 
-1. `stage=0`，确认原始画面。
-2. `stage=3`，保持 DLSS5 参数不变。
-3. 若只在桥接开启时出现问题，检查深度约定、运动向量缩放和历史重置。
-4. 若两者都正常但 DLSS5 开启后异常，优先检查 `nvngx_dlssnr.dll`、RenoDX add-on 和 ReShade 版本是否成套。
+```ini
+[NRBeforeSR]
+Enabled=1
+Mode=2
+```
+
+`Mode=2` 表示渲染分辨率 NR 后交给原始 DLSS 超分。它是本项目对装机宅包内默认配置的唯一修改；两个插件二进制未修改。
+
+## 热键与日志
+
+- `F6`：前置 NR 总开关。
+- `Home`：ReShade Overlay。
+- `Insert`：OptiScaler Overlay。
+
+日志位于 `payload/Bridge`、`payload/OptiScaler`、`payload/ReShade/.../pre-nr` 与游戏目录。成功判断以 `signed feature 18 create ... Success` 和持续增长的 `NR-before-SR evaluate succeeded` 为准。
+
+HDR 下插件截图可能因色彩空间处理显示为灰色/偏色，优先使用 Windows 系统截图工具。

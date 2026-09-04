@@ -1,0 +1,53 @@
+Third-Party Notices
+===================
+
+Distribution attribution
+------------------------
+
+The files nr-before-sr.zh-CN.addon64 and nrchain_nvngx.dll were supplied in the
+package named "B站野生的装机宅 DLSS5-AI渲染超分版-RTX50.zip", attributed by its
+own UI and installation note to the Bilibili creator 野生的装机宅.
+
+This repository redistributes those two binaries unchanged and does not claim
+their source code or authorship. The integration changes only the default
+nr_before_sr.ini mode from 1 to 2 and modifies the surrounding OptiScaler,
+ReShade configuration, launcher, and verification code. SHA-256 values are listed
+in the repository manifest and source documentation.
+
+RenoDX
+------
+
+Project: RenoDX by clshortfuse
+Source: https://github.com/clshortfuse/renodx
+
+The HDR model-picture composition used by this add-on is derived from RenoDX's
+DLSS 5 Neural Rendering add-on. In particular, this includes the two-branch
+luminance-ratio composition, the OkLab hue correction applied to the rescaled
+model result, and the final blend between a luminance-only result and the
+model's colour. The implementation here has been adapted to this add-on's
+resource and exposure contracts.
+
+The OkLab conversion matrices are Bjorn Ottosson's published constants. The
+AP1 gamut matrices and sRGB transfer functions are standard colour science.
+
+MIT License
+
+Copyright (c) 2025 Carlos Lopez Jr.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.

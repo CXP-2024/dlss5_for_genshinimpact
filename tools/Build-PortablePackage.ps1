@@ -1,19 +1,29 @@
 param(
     [Parameter(Mandatory = $true)][string]$RuntimeRoot,
-    [Parameter(Mandatory = $true)][string]$Dlss5Root,
-    [Parameter(Mandatory = $true)][string]$RenoDxRoot,
+    [Parameter(Mandatory = $true)][string]$OptiScalerRoot,
+    [Parameter(Mandatory = $true)][string]$DlssNrRuntimePath,
     [Parameter(Mandatory = $true)][string]$OutputDirectory
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
+
 $repo = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 $runtime = [IO.Path]::GetFullPath($RuntimeRoot)
-$dlss5 = [IO.Path]::GetFullPath($Dlss5Root)
-$renodx = [IO.Path]::GetFullPath($RenoDxRoot)
+$optiSource = [IO.Path]::GetFullPath($OptiScalerRoot)
+$dlssNrRuntime = [IO.Path]::GetFullPath($DlssNrRuntimePath)
 $out = [IO.Path]::GetFullPath($OutputDirectory)
-$staging = Join-Path $out 'DLSS5_Genshin_Ready'
-$zip = Join-Path $out 'DLSS5_Genshin_Ready.zip'
+$staging = Join-Path $out 'DLSS5_GI_Ready'
+$zip = Join-Path $out 'DLSS5_GI_Ready_v1.2_PreNR_RTX50.zip'
+
+$expectedHashes = @{
+    Bridge = '1AB7FBD90B69D8F57851FDFC039AA3890AEE46AEA2DCB4DB72C8049282140310'
+    PreNrAddon = '522D979CBFF335710F362B9FC2F330988673D7F8C7A1A2D93DA9980EC8DDA695'
+    NrChain = 'DB26E486592B252072BA5734FC2B27412863B8526826225640C837D4B4D11B60'
+    DlssNrRuntime = 'E16BCF15E16E13F527491CDF7845B2FE6521A738D8F7C9C721866A8496E1FC8E'
+    OptiScaler = '38FA288ABC16EE8E4FE1A1992E731ED7FAAB167FE09C41C93D0D8F01D8D110CF'
+    ReShade = '0CEE63F9C9F13F3AC909C5B4903F4DBB4B719A7AB3B4F13B0DEAF83C814B94F7'
+}
 
 function Require-File {
     param([string]$Path)
@@ -23,6 +33,13 @@ function Require-File {
 function Require-Directory {
     param([string]$Path)
     if (-not (Test-Path -LiteralPath $Path -PathType Container)) { throw "缺少目录：$Path" }
+}
+
+function Assert-Sha256 {
+    param([string]$Path, [string]$Expected, [string]$Label)
+    Require-File $Path
+    $actual = (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash
+    if ($actual -ne $Expected) { throw "$Label SHA-256 不匹配：$actual" }
 }
 
 function Copy-File {
@@ -43,27 +60,57 @@ function Copy-RelativeTree {
     }
 }
 
+Require-Directory $runtime
+Require-Directory $optiSource
+Require-File $dlssNrRuntime
 New-Item -ItemType Directory -Force -Path $out | Out-Null
+
+$resolvedOut = (Resolve-Path -LiteralPath $out).Path.TrimEnd('\')
+$resolvedStaging = [IO.Path]::GetFullPath($staging)
+if (-not $resolvedStaging.StartsWith($resolvedOut + '\', [StringComparison]::OrdinalIgnoreCase)) {
+    throw "拒绝清理输出目录外的路径：$resolvedStaging"
+}
+
 if (Test-Path -LiteralPath $staging) { Remove-Item -LiteralPath $staging -Recurse -Force }
 if (Test-Path -LiteralPath $zip) { Remove-Item -LiteralPath $zip -Force }
 New-Item -ItemType Directory -Force -Path $staging | Out-Null
 
+$bridgeDll = Join-Path $repo 'release\configs\Dx11FsrBridge.dll'
+$preNrSource = Join-Path $repo 'release\pre-nr'
+$preNrAddon = Join-Path $preNrSource 'nr-before-sr.zh-CN.addon64'
+$nrChain = Join-Path $preNrSource 'nrchain_nvngx.dll'
+$optiDll = Join-Path $optiSource 'OptiScaler.dll'
+$reshadeDll = Join-Path $runtime 'payload\ReShade\ReShade64.dll'
+
+Assert-Sha256 $bridgeDll $expectedHashes.Bridge 'Dx11FsrBridge.dll'
+Assert-Sha256 $preNrAddon $expectedHashes.PreNrAddon 'nr-before-sr.zh-CN.addon64'
+Assert-Sha256 $nrChain $expectedHashes.NrChain 'nrchain_nvngx.dll'
+Assert-Sha256 $dlssNrRuntime $expectedHashes.DlssNrRuntime 'nvngx_dlssnr.dll'
+Assert-Sha256 $optiDll $expectedHashes.OptiScaler 'OptiScaler.dll'
+Assert-Sha256 $reshadeDll $expectedHashes.ReShade 'ReShade64.dll'
+
 Copy-File (Join-Path $repo 'release\portable-template\启动_DLSS5.bat') '启动_DLSS5.bat'
 Copy-File (Join-Path $repo 'release\portable-template\README.txt') 'README.txt'
+Copy-File (Join-Path $repo 'release\portable-template\ATTRIBUTION.txt') 'ATTRIBUTION.txt'
 Copy-File (Join-Path $repo 'release\portable-template\configure_and_start.ps1') 'payload\_internal\configure_and_start.ps1'
 Copy-File (Join-Path $runtime 'unlockfps_nc.exe') 'unlockfps_nc.exe'
 Copy-File (Join-Path $runtime 'UnlockerStub.dll') 'UnlockerStub.dll'
 
-Copy-File (Join-Path $runtime 'payload\Bridge\Dx11FsrBridge.dll') 'payload\Bridge\Dx11FsrBridge.dll'
-Copy-File (Join-Path $runtime 'payload\Bridge\Dx11FsrBridge.ini') 'payload\Bridge\Dx11FsrBridge.ini'
-Copy-File (Join-Path $runtime 'payload\ReShade\ReShade64.dll') 'payload\ReShade\ReShade64.dll'
+Copy-File $bridgeDll 'payload\Bridge\Dx11FsrBridge.dll'
+Copy-File (Join-Path $repo 'release\configs\Dx11FsrBridge.ini') 'payload\Bridge\Dx11FsrBridge.ini'
+Copy-File $reshadeDll 'payload\ReShade\ReShade64.dll'
 
 $shaderRoot = Join-Path $runtime 'payload\ReShade\reshade-shaders'
 Copy-RelativeTree $shaderRoot 'payload\ReShade\reshade-shaders' {
     param($file)
     $relative = $file.FullName.Substring($shaderRoot.TrimEnd('\').Length + 1)
-    return ($file.Name -notmatch '\.log($|\.)' -and $relative -notmatch '(^|\\)Addons\\_disabled_legacy(\\|$)')
+    return ($file.Name -notmatch '\.log($|\.)' -and $relative -notmatch '(^|\\)Addons(\\|$)')
 }
+
+foreach ($name in @('nr-before-sr.zh-CN.addon64', 'nrchain_nvngx.dll', 'nr_before_sr.ini', 'THIRD_PARTY_NOTICES.txt')) {
+    Copy-File (Join-Path $preNrSource $name) "payload\ReShade\reshade-shaders\Addons\pre-nr\$name"
+}
+Copy-File $dlssNrRuntime 'payload\ReShade\reshade-shaders\Addons\pre-nr\nvngx_dlssnr.dll'
 
 $optiFiles = @(
     'amd_fidelityfx_dx12.dll',
@@ -73,35 +120,27 @@ $optiFiles = @(
     'libxess.dll',
     'nvngx_dlss.dll',
     'nvngx_dlss.license.txt',
-    'OptiScaler.dll',
-    'OptiScaler.default.ini',
-    'OptiScaler.ini'
+    'OptiScaler.dll'
 )
 foreach ($name in $optiFiles) {
-    Copy-File (Join-Path $runtime "payload\OptiScaler\$name") "payload\OptiScaler\$name"
+    Copy-File (Join-Path $optiSource $name) "payload\OptiScaler\$name"
 }
-# The source package may contain the maintainer's absolute OptiScaler path.
-# Portable users must resolve this path from the extracted package instead.
-$portableOptiIni = Join-Path $staging 'payload\OptiScaler\OptiScaler.ini'
-$portableOptiText = Get-Content -LiteralPath $portableOptiIni -Raw -Encoding UTF8
-$portableOptiText = [regex]::Replace($portableOptiText, '(?im)^\s*OptiDllPath\s*=.*$', 'OptiDllPath = auto')
-[IO.File]::WriteAllText($portableOptiIni, $portableOptiText, [Text.UTF8Encoding]::new($false))
-Copy-RelativeTree (Join-Path $runtime 'payload\OptiScaler\D3D12_Optiscaler') 'payload\OptiScaler\D3D12_Optiscaler'
-Copy-RelativeTree (Join-Path $runtime 'payload\OptiScaler\Licenses') 'payload\OptiScaler\Licenses'
-
-# Keep the DLSS and DLSS-NR pair from the same DLSS5 test bundle (both 310.8).
-Copy-File (Join-Path $dlss5 'dlss5\nvngx_dlss.dll') 'payload\OptiScaler\nvngx_dlss.dll'
-Copy-File (Join-Path $dlss5 'dlss5\nvngx_dlssnr.dll') 'payload\ReShade\reshade-shaders\Addons\nvngx_dlssnr.dll'
-Copy-File (Join-Path $renodx 'renodx-dlss5.addon64') 'payload\ReShade\reshade-shaders\Addons\renodx-dlss5.addon64'
+Copy-File (Join-Path $optiSource 'OptiScaler.default.ini') 'payload\OptiScaler\OptiScaler.default.ini'
+Copy-File (Join-Path $optiSource 'OptiScaler.default.ini') 'payload\OptiScaler\OptiScaler.ini'
+Copy-RelativeTree (Join-Path $optiSource 'D3D12_Optiscaler') 'payload\OptiScaler\D3D12_Optiscaler'
+Copy-RelativeTree (Join-Path $optiSource 'Licenses') 'payload\OptiScaler\Licenses'
 
 $manifest = [ordered]@{
-    ReShade = '6.8.0 Add-on'
-    OptiScaler = '0.9.4'
+    Package = 'v1.2'
+    Profile = 'RTX 50 pre-NR then original DLSS Super Resolution'
+    GIMI = 'not required and not included'
+    ReShade = '6.8.0 Add-on; unmodified v1.1 runtime'
+    OptiScaler = 'DLSS-on-DX12/pre-NR compatibility build; ReShade private-DX12 bypass and custom NGX parameter hand-off'
     Dx11FsrBridge = '1.2.3'
-    Dlss5Bridge = '1.0.20 local compatibility build'
+    PreNrAddon = 'Bilibili 野生的装机宅; binaries unmodified; config Mode 1 -> Mode 2'
     Dlss = '310.8.0'
-    DlssNr = '310.8.0 preview'
-    Notes = 'Built for private/test distribution; verify component permissions before public redistribution.'
+    DlssNr = '310.8.0 RTX 50 preview'
+    Notes = 'Old dlss5-dx11-bridge and RenoDX post-NR add-ons are intentionally not included.'
 }
 $manifest | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $staging 'VERSION.json') -Encoding UTF8
 
@@ -110,6 +149,8 @@ $hashLines = foreach ($file in Get-ChildItem -LiteralPath $staging -Recurse -Fil
     $hash = (Get-FileHash -LiteralPath $file.FullName -Algorithm SHA256).Hash
     "$hash  $relative"
 }
-$hashLines | Set-Content -LiteralPath (Join-Path $staging 'SHA256SUMS.txt') -Encoding ASCII
+$hashLines | Set-Content -LiteralPath (Join-Path $staging 'SHA256SUMS.txt') -Encoding UTF8
+
 Compress-Archive -LiteralPath $staging -DestinationPath $zip -CompressionLevel Optimal
-Write-Host "已生成：$zip"
+Write-Host "已生成目录：$staging"
+Write-Host "已生成压缩包：$zip"

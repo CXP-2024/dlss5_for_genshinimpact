@@ -1,0 +1,2727 @@
+diff --git a/OptiScaler/Config.cpp b/OptiScaler/Config.cpp
+index a16587a4..de2d120b 100644
+--- a/OptiScaler/Config.cpp
++++ b/OptiScaler/Config.cpp
+@@ -558,6 +558,8 @@ bool Config::Reload(std::filesystem::path iniPath)
+             HookOriginalNvngxOnly.set_from_config(readBool("Hooks", "HookOriginalNvngxOnly"));
+             EarlyHooking.set_from_config(readBool("Hooks", "EarlyHooking"));
+             UseNtdllHooks.set_from_config(readBool("Hooks", "UseNtdllHooks"));
++            SkipD3D11DeviceVTableHooks.set_from_config(
++                readBool("Hooks", "SkipD3D11DeviceVTableHooks"));
+         }
+
+         // RCAS
+@@ -1417,6 +1419,8 @@ bool Config::SaveIni()
+                      GetBoolValue(Instance()->HookOriginalNvngxOnly.value_for_config()).c_str());
+         ini.SetValue("Hooks", "EarlyHooking", GetBoolValue(Instance()->EarlyHooking.value_for_config()).c_str());
+         ini.SetValue("Hooks", "UseNtdllHooks", GetBoolValue(Instance()->UseNtdllHooks.value_for_config()).c_str());
++        ini.SetValue("Hooks", "SkipD3D11DeviceVTableHooks",
++                     GetBoolValue(Instance()->SkipD3D11DeviceVTableHooks.value_for_config()).c_str());
+     }
+
+     // InitFlags
+diff --git a/OptiScaler/Config.h b/OptiScaler/Config.h
+index 8f432923..e8d3b4f4 100644
+--- a/OptiScaler/Config.h
++++ b/OptiScaler/Config.h
+@@ -609,6 +609,9 @@ class Config
+     CustomOptional<bool> HookOriginalNvngxOnly { false };
+     CustomOptional<bool> EarlyHooking { false };
+     CustomOptional<bool> UseNtdllHooks { true };
++    // Avoid patching COM vtables owned by another D3D11 proxy layer (GIMI).
++    // This leaves OptiScaler's upscaler entry points active.
++    CustomOptional<bool> SkipD3D11DeviceVTableHooks { false };
+
+     // Upscale Ratio Override
+     CustomOptional<bool> UpscaleRatioOverrideEnabled { false };
+diff --git a/OptiScaler/dlssnr/DlssNrFeature_Dx12.cpp b/OptiScaler/dlssnr/DlssNrFeature_Dx12.cpp
+new file mode 100644
+index 00000000..568be483
+--- /dev/null
++++ b/OptiScaler/dlssnr/DlssNrFeature_Dx12.cpp
+@@ -0,0 +1,1375 @@
++#include "pch.h"
++
++#include <set>
++
++#include "DlssNr.h"
++
++
++#include "DlssNr_Codec.h"
++#include "DlssNr_Capture.h"
++#include "DlssNr_Proxy.h"
++
++#include <shaders/dlssnr/DlssNr_Dx12.h>
++
++#include <Config.h>
++#include <State.h>
++#include <Util.h>
++
++#include <proxies/NVNGX_Proxy.h>
++#include <gpu_time/GpuTime_Dx12.h>
++
++#include <mutex>
++#include <algorithm>
++#include <cstring>
++
++namespace
++{
++// NGX result codes, by name.
++//
++// A user's log recently read "init 0x-452FFFFF", which is an int formatted as hex and is
++// undiagnosable by anyone. It was 0xBAD00001, FeatureNotSupported -- a complete answer, printed as
++// noise. Names cost nothing and turn a bug report into a diagnosis.
++const char* NgxResultName(unsigned int r)
++{
++    switch (r)
++    {
++    case 0x1: return "Success";
++    case 0xBAD00001: return "FAIL_FeatureNotSupported";
++    case 0xBAD00002: return "FAIL_PlatformError";
++    case 0xBAD00003: return "FAIL_FeatureAlreadyExists";
++    case 0xBAD00004: return "FAIL_FeatureNotFound";
++    case 0xBAD00005: return "FAIL_InvalidParameter";
++    case 0xBAD00006: return "FAIL_ScratchBufferTooSmall";
++    case 0xBAD00007: return "FAIL_NotInitialized";
++    case 0xBAD00008: return "FAIL_UnsupportedInputFormat";
++    case 0xBAD00009: return "FAIL_RWFlagMissing";
++    case 0xBAD0000A: return "FAIL_MissingInput";
++    case 0xBAD0000B: return "FAIL_UnableToInitializeFeature";
++    case 0xBAD0000C: return "FAIL_OutOfDate";
++    case 0xBAD0000D: return "FAIL_OutOfGPUMemory";
++    case 0xBAD0000E: return "FAIL_UnsupportedFormat";
++    case 0xBAD0000F: return "FAIL_UnableToWriteToAppDataPath";
++    case 0xBAD00010: return "FAIL_UnsupportedParameter";
++    case 0xBAD00011: return "FAIL_Denied";
++    case 0xBAD00012: return "FAIL_NotImplemented";
++    default: return "unknown";
++    }
++}
++
++// Does the driver's own nvngx.dll dispatch Neural Rendering?
++//
++// The trick is that correct parameters are not needed to find out, because the KIND of failure is
++// the answer. A dispatcher that has never heard of feature 18 rejects it before looking at anything:
++//
++//   FeatureNotFound / FeatureNotSupported / NotImplemented -- the driver does not route it, and the
++//       forwarder is necessary rather than merely tolerated.
++//   MissingInput / InvalidParameter / UnsupportedParameter -- the driver DOES route it. It reached
++//       the feature, which then complained about the arguments. That is the win: it means the whole
++//       forwarder, and the per-game copy of the model, can go.
++//   Success -- better still, though not expected from an empty parameter block.
++//
++// Once per session, and only when asked for.
++void ProbeProxyDispatch(ID3D12GraphicsCommandList* cmdList)
++{
++    static bool done = false;
++
++    if (done)
++        return;
++
++    done = true;
++
++    if (!NVNGXProxy::IsDx12Inited())
++    {
++        LOG_INFO("DLSS-NR proxy probe: the driver's nvngx is not initialised here, nothing to ask");
++        return;
++    }
++
++    const auto allocate = NVNGXProxy::D3D12_AllocateParameters();
++    const auto destroy = NVNGXProxy::D3D12_DestroyParameters();
++    const auto create = NVNGXProxy::D3D12_CreateFeature();
++    const auto release = NVNGXProxy::D3D12_ReleaseFeature();
++
++    if (allocate == nullptr || create == nullptr)
++    {
++        LOG_INFO("DLSS-NR proxy probe: the driver's nvngx does not export what the probe needs");
++        return;
++    }
++
++    NVSDK_NGX_Parameter* params = nullptr;
++
++    if (allocate(&params) != NVSDK_NGX_Result_Success || params == nullptr)
++    {
++        LOG_INFO("DLSS-NR proxy probe: could not allocate a parameter block");
++        return;
++    }
++
++    // Feature 18, and a feature that certainly does not exist, asked the same way.
++    //
++    // A single result cannot answer this. "UnableToInitializeFeature" for 18 looks like the
++    // dispatcher having found the feature and failed to start it on an empty parameter block -- but
++    // it might equally be what this dispatcher says about anything it cannot set up. The control
++    // settles it: if a nonsense id comes back differently, the difference is knowledge of feature
++    // 18. If both come back the same, the first result meant nothing.
++    NVSDK_NGX_Handle* handle = nullptr;
++    const auto result = (unsigned int) create(cmdList, (NVSDK_NGX_Feature) 18, params, &handle);
++
++    if (handle != nullptr && release != nullptr)
++        release(handle);
++
++    NVSDK_NGX_Handle* controlHandle = nullptr;
++    const auto control =
++        (unsigned int) create(cmdList, (NVSDK_NGX_Feature) 200, params, &controlHandle);
++
++    if (controlHandle != nullptr && release != nullptr)
++        release(controlHandle);
++
++    LOG_INFO("DLSS-NR proxy probe: feature 18 -> 0x{:X} ({}), control feature 200 -> 0x{:X} ({})",
++             result, NgxResultName(result), control, NgxResultName(control));
++
++    const bool rejectedOutright =
++        result == 0xBAD00004 || result == 0xBAD00001 || result == 0xBAD00012;
++
++    if (result == control)
++        LOG_INFO("DLSS-NR proxy probe: both answers identical, so this says nothing about feature 18 "
++                 "-- the driver treats it exactly as it treats a feature that does not exist");
++    else if (rejectedOutright)
++        LOG_INFO("DLSS-NR proxy probe: feature 18 is rejected outright -- the driver does not route "
++                 "it and the forwarder is required");
++    else
++        LOG_INFO("DLSS-NR proxy probe: feature 18 answers differently from a nonexistent one, so the "
++                 "driver knows it -- the forwarder and the per-game model copy could both go");
++
++    if (destroy != nullptr)
++        destroy(params);
++}
++
++// Everything the model is reached through. The snippet refuses callers whose module path does not
++// contain "nvngx.dll", so the calls are made from a small library named for exactly that reason and
++// shipped beside OptiScaler; see nvngx.dll_dlssnr.dll.
++using PFN_NrCreate = void*(__cdecl*) (const wchar_t*, const wchar_t*, ID3D12Device*,
++                                      ID3D12GraphicsCommandList*, void*, unsigned int, unsigned int, int,
++                                      float, int, float, float, float, int, int);
++using PFN_NrEvaluate = int(__cdecl*) (ID3D12GraphicsCommandList*, void*, void*, ID3D12Resource*,
++                                      ID3D12Resource*, ID3D12Resource*, ID3D12Resource*, unsigned int,
++                                      unsigned int, unsigned int, unsigned int, int, int, float, int,
++                                      float, float, float, int, float, float);
++using PFN_NrRelease = void(__cdecl*) (void*);
++using PFN_NrSetExtras = void(__cdecl*) (void*, float, ID3D12Resource*, ID3D12Resource*, ID3D12Resource*,
++                                        unsigned int, unsigned int, unsigned int, unsigned int);
++using PFN_NrSetFloatSlot = void(__cdecl*) (int);
++using PFN_NrProbeFloat = void(__cdecl*) (void*, const char*, float, int);
++
++// One per back buffer, so an allocator is never reset while its frame is still in flight.
++
++struct NrState
++{
++    HMODULE forwarder = nullptr;
++    PFN_NrCreate create = nullptr;
++    PFN_NrEvaluate evaluate = nullptr;
++    PFN_NrRelease release = nullptr;
++    PFN_NrSetExtras setExtras = nullptr;
++    PFN_NrSetFloatSlot setFloatSlot = nullptr;
++    PFN_NrProbeFloat probeFloat = nullptr;
++    bool floatSlotKnown = false;
++    int* lastInit = nullptr;
++    int* lastCreate = nullptr;
++
++    NVSDK_NGX_Parameter* capabilityParams = nullptr;
++    void* feature = nullptr;
++
++    // The model cannot read and write one resource, so the frame is staged through these.
++    ID3D12Resource* colorCopy = nullptr;
++    ID3D12Resource* output = nullptr;
++
++    // The frame as the upscaler wrote it. The resolve adds the model's edit to this rather than
++    // reconstructing it by inverting the tone curve, which is what turned every light in the frame into
++    // a string of coloured cells.
++    ID3D12Resource* hdrCopy = nullptr;
++
++    // The frame shrunk for the model, when it is working below full resolution.
++    ID3D12Resource* colorSmall = nullptr;
++
++    unsigned int workWidth = 0;
++    unsigned int workHeight = 0;
++
++    // Cloned unconditionally when running at present, and only for typeless formats otherwise.
++    ID3D12Resource* depthClone = nullptr;
++    ID3D12Resource* motionClone = nullptr;
++
++    unsigned int width = 0;
++    unsigned int height = 0;
++    bool reset = true;
++
++    // Dimensions of the guides as the upscaler handed them over, kept for the present path, which runs
++    // long after that call has returned.
++    unsigned int guideWidth = 0;
++    unsigned int guideHeight = 0;
++
++    // How the game encodes its guides, as the game itself reports it. Captured with the guides, since
++    // the finished-frame path runs long after the upscaler's call has returned.
++    bool guideDepthInverted = false;
++    float guideMvScaleX = 1.0f;
++    float guideMvScaleY = 1.0f;
++
++    // The values the live feature was created with, and when a difference from them was first seen.
++    unsigned int builtPreset = 0;
++    float builtIntensity = 0.0f;
++    unsigned int builtStyle = 0;
++    float builtLocalStructure = 0.0f;
++    float builtLocalTone = 0.0f;
++    float builtSkinStructure = 0.0f;
++    bool builtAutoMask = false;
++    unsigned long long settledAt = 0;
++
++    // Once something fails there is no recovering it mid-session, and retrying every frame turns a
++    // failure into a crash. It stays off and says why.
++    bool failed = false;
++    const char* reason = "";
++};
++
++NrState g_nr;
++std::unique_ptr<DlssNr_Dx12> g_compose;
++
++// What the pass costs on the GPU, for the breakdown in the overlay.
++std::unique_ptr<GpuTime_Dx12> g_gpuTime;
++std::optional<double> g_lastGpuTime;
++
++// Writes matched before/after frames on request, so comparisons stop depending on video.
++capture::FrameCapture g_capture;
++
++// One capture happens on its own each session, so there is always a fresh sample without anyone having
++// to remember to ask. Started after the scene has had a moment to settle: the first frames after a
++// feature is built carry its reset, and are not representative of anything.
++constexpr unsigned long long kAutoCaptureAfterFrames = 180;
++bool g_autoCaptureDone = false;
++
++// Cleared once per run, so a session's captures are its own and nothing accumulates across launches.
++void ClearCaptureDirectory()
++{
++    static bool cleared = false;
++
++    if (cleared)
++        return;
++
++    cleared = true;
++
++    std::error_code ec;
++    const auto dir = Util::DllPath().remove_filename() / "dlssnr-capture";
++
++    if (std::filesystem::exists(dir, ec))
++    {
++        std::filesystem::remove_all(dir, ec);
++
++        if (ec)
++            LOG_WARN("DLSS-NR could not clear {}: {}", dir.string(), ec.message());
++    }
++}
++
++unsigned long long g_frames = 0;
++
++// A capture requested from outside the game: when the render path has no fence of its own, the write
++// waits until this frame count, by which point the GPU is certainly past the copies.
++unsigned long long g_captureWriteAtFrame = 0;
++
++// Dropping a file named dlssnr-capture.trigger beside OptiScaler requests a capture, so a session can
++// be asked for one from outside the game -- no alt-tab, no menu. Checked once a second, effectively.
++void CheckCaptureTrigger()
++{
++    if ((g_frames % 60) != 0)
++        return;
++
++    std::error_code ec;
++    const auto trigger = Util::DllPath().remove_filename() / "dlssnr-capture.trigger";
++
++    if (std::filesystem::exists(trigger, ec))
++    {
++        std::filesystem::remove(trigger, ec);
++        DlssNr::RequestCapture(capture::kMaxFrames);
++        LOG_INFO("DLSS-NR capture requested by trigger file");
++    }
++}
++
++// The encoded mean is aimed here. Mid-grey rather than anything brighter: the model has to see both the
++// shadow detail it might lift and the highlights it must not blow out.
++constexpr float kTargetEncodedMean = 0.45f;
++
++// How fast the derived value follows the scene. Readings arrive a few times a second, and an exposure
++// that lunges at every cut is worse than one that arrives a moment late.
++constexpr float kWhitePointBlend = 0.25f;
++
++// Recomputes the white point from a measured mean. Inverting the encode for the white point that puts
++// that mean at the target gives wp = mean * (1 - t^g) / t^g.
++float WhitePointForMean(float meanLuma)
++{
++    const float encoded = powf(kTargetEncodedMean, 2.2f);
++    const float ratio = encoded / (1.0f - encoded);
++    const float wp = meanLuma / ratio;
++    // A black frame between scenes would otherwise drive this to zero and divide the next frame by it.
++    return wp < 0.01f ? 0.01f : (wp > 10000.0f ? 10000.0f : wp);
++}
++
++std::filesystem::path g_dllDir;
++
++// Loads the forwarder that owns the calls into the snippet.
++bool EnsureForwarder()
++{
++    if (g_nr.forwarder != nullptr)
++        return g_nr.create != nullptr;
++
++    if (g_dllDir.empty())
++        g_dllDir = Util::DllPath().remove_filename();
++
++    // Beside OptiScaler first, then beside the executable: someone dropping this into a game folder may
++    // reasonably put it in either place.
++    auto found = Util::FindFilePath(g_dllDir, "nvngx.dll_dlssnr.dll");
++
++    if (!found.has_value())
++        found = Util::FindFilePath(Util::ExePath().remove_filename(), "nvngx.dll_dlssnr.dll");
++
++    if (!found.has_value())
++    {
++        LOG_ERROR("nvngx.dll_dlssnr.dll not found beside OptiScaler ({}) or the game executable",
++                  g_dllDir.string());
++        g_nr.reason = "nvngx.dll_dlssnr.dll is missing";
++        return false;
++    }
++
++    // FindFilePath hands back the file itself, not the directory holding it.
++    const auto path = found.value();
++    g_nr.forwarder = LoadLibraryW(path.wstring().c_str());
++
++    if (g_nr.forwarder == nullptr)
++    {
++        LOG_ERROR("nvngx.dll_dlssnr.dll found at {} but would not load, error {}", path.string(),
++                  GetLastError());
++        g_nr.reason = "nvngx.dll_dlssnr.dll would not load";
++        return false;
++    }
++
++    g_nr.create = (PFN_NrCreate) GetProcAddress(g_nr.forwarder, "dlssnr_call_create");
++    g_nr.evaluate = (PFN_NrEvaluate) GetProcAddress(g_nr.forwarder, "dlssnr_call_evaluate");
++    g_nr.release = (PFN_NrRelease) GetProcAddress(g_nr.forwarder, "dlssnr_call_release");
++    // Optional: an older forwarder simply lacks it, and the model runs as before.
++    g_nr.setExtras = (PFN_NrSetExtras) GetProcAddress(g_nr.forwarder, "dlssnr_call_set_extras");
++    g_nr.setFloatSlot = (PFN_NrSetFloatSlot) GetProcAddress(g_nr.forwarder, "dlssnr_call_set_float_slot");
++    g_nr.probeFloat = (PFN_NrProbeFloat) GetProcAddress(g_nr.forwarder, "dlssnr_call_probe_float");
++    g_nr.lastInit = (int*) GetProcAddress(g_nr.forwarder, "dlssnr_call_last_init");
++    g_nr.lastCreate = (int*) GetProcAddress(g_nr.forwarder, "dlssnr_call_last_create");
++
++    if (g_nr.create == nullptr || g_nr.evaluate == nullptr)
++    {
++        g_nr.reason = "the forwarder is missing its exports";
++        return false;
++    }
++
++    LOG_INFO("DLSS-NR forwarder loaded from {}", path.string());
++    return true;
++}
++
++// The model needs the driver core's own capability block: it carries the snippet and preset callbacks a
++// feature expects at create time, which a freshly allocated block does not have.
++void DiscoverFloatSlot(NVSDK_NGX_Parameter* params);
++
++bool EnsureCapabilityParams(ID3D12Device* device)
++{
++    if (g_nr.capabilityParams != nullptr)
++        return true;
++
++    if (!NVNGXProxy::IsDx12Inited() && !NVNGXProxy::InitDx12(device))
++    {
++        g_nr.reason = "the NGX core would not initialise";
++        return false;
++    }
++
++    if (NVNGXProxy::D3D12_GetCapabilityParameters() == nullptr)
++    {
++        g_nr.reason = "the NGX core has no capability parameters";
++        return false;
++    }
++
++    if (NVNGXProxy::D3D12_GetCapabilityParameters()(&g_nr.capabilityParams) != NVSDK_NGX_Result_Success ||
++        g_nr.capabilityParams == nullptr)
++    {
++        g_nr.capabilityParams = nullptr;
++        g_nr.reason = "the NGX core refused its capability parameters";
++        return false;
++    }
++
++    // Before anything is written to it, work out where this block keeps floats.
++    DiscoverFloatSlot(g_nr.capabilityParams);
++    return true;
++}
++
++// Works out which vtable slot this parameter block keeps floats in, by writing a known value through
++// each candidate and asking for it back through the header's typed getter. Only a slot that returns the
++// value it was given is accepted.
++//
++// Slot 1 is where the public header declares the float overload, so it is tried first and wins wherever
++// that assumption holds. It does not hold for the driver's own block: every float written there reads
++// back as FAIL_UnsupportedParameter while every uint lands, which is why intensity, local structure,
++// local tone and skin structure never did anything.
++void DiscoverFloatSlot(NVSDK_NGX_Parameter* params)
++{
++    if (g_nr.floatSlotKnown || params == nullptr || g_nr.probeFloat == nullptr ||
++        g_nr.setFloatSlot == nullptr)
++        return;
++
++    g_nr.floatSlotKnown = true;
++
++    static const char* kProbeKey = "DLSSNR.OptiScalerFloatProbe";
++    static const int kCandidates[] = { 1, 2, 5, 6, 7, 4, 3, 0 };
++    const float expected = 0.375f; // exact in binary, so the round trip is exact or it is wrong
++
++    for (int slot : kCandidates)
++    {
++        float readBack = 0.0f;
++        g_nr.probeFloat(params, kProbeKey, expected, slot);
++
++        if (params->Get(kProbeKey, &readBack) == NVSDK_NGX_Result_Success && readBack == expected)
++        {
++            g_nr.setFloatSlot(slot);
++            LOG_INFO("DLSS-NR float parameters go through vtable slot {}", slot);
++            return;
++        }
++    }
++
++    LOG_ERROR("DLSS-NR could not find the float setter: intensity, local structure, local tone and skin "
++              "structure will have no effect. The uint parameters still apply.");
++}
++
++// Switching inject points changes the surface format underneath the scratch set: the finished frame
++// works in the swapchain's format, the pre-frame-generation path in the upscaler's. A stale set either
++// clamps linear HDR into an 8-bit texture -- wrong brightness until something forces a rebuild -- or
++// hands CopyResource mismatched formats, which fails silently and makes the whole pass appear to do
++// nothing. So the set is torn down whenever the format it was built for is not the format needed now.
++// Retired model features and surfaces are parked and freed a comfortable number of evaluates later.
++// Releasing them immediately was the device hang: with frame generation the GPU runs several frames
++// behind, this work rides the game's own queue that no module fence covers, and an NGX feature or
++// scratch texture freed under in-flight work kills the device.
++struct NrRetired
++{
++    void* feature = nullptr;
++    ID3D12Resource* resource = nullptr;
++    int framesLeft = 32;
++};
++
++std::vector<NrRetired> g_nrRetired;
++
++void ParkNrFeature(void*& feature)
++{
++    if (feature == nullptr)
++        return;
++
++    NrRetired r;
++    r.feature = feature;
++    feature = nullptr;
++    g_nrRetired.push_back(r);
++}
++
++void ParkNrResource(ID3D12Resource*& res)
++{
++    if (res == nullptr)
++        return;
++
++    NrRetired r;
++    r.resource = res;
++    res = nullptr;
++    g_nrRetired.push_back(r);
++}
++
++void TickNrRetired()
++{
++    for (size_t i = 0; i < g_nrRetired.size();)
++    {
++        if (--g_nrRetired[i].framesLeft > 0)
++        {
++            ++i;
++            continue;
++        }
++
++        if (g_nrRetired[i].feature != nullptr && g_nr.release != nullptr)
++            g_nr.release(g_nrRetired[i].feature);
++
++        if (g_nrRetired[i].resource != nullptr)
++            g_nrRetired[i].resource->Release();
++
++        g_nrRetired.erase(g_nrRetired.begin() + i);
++    }
++}
++
++void ReleaseSurfacesIfFormatChanged(DXGI_FORMAT needed)
++{
++    if (g_nr.output == nullptr || g_nr.output->GetDesc().Format == needed)
++        return;
++
++    LOG_INFO("DLSS-NR rebuilding surfaces: format {} -> {} (inject point changed)",
++             (int) g_nr.output->GetDesc().Format, (int) needed);
++
++    ParkNrFeature(g_nr.feature);
++
++    for (ID3D12Resource** r :
++         { &g_nr.output, &g_nr.colorCopy, &g_nr.hdrCopy, &g_nr.colorSmall })
++        ParkNrResource(*r);
++
++    g_nr.reset = true;
++}
++
++ID3D12Resource* CreateScratch(ID3D12Device* device, DXGI_FORMAT format, unsigned int width,
++                              unsigned int height)
++{
++    D3D12_HEAP_PROPERTIES heap {};
++    heap.Type = D3D12_HEAP_TYPE_DEFAULT;
++
++    D3D12_RESOURCE_DESC desc {};
++    desc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
++    desc.Width = width;
++    desc.Height = height;
++    desc.DepthOrArraySize = 1;
++    desc.MipLevels = 1;
++    desc.Format = format;
++    desc.SampleDesc.Count = 1;
++    desc.Layout = D3D12_TEXTURE_LAYOUT_UNKNOWN;
++    // The model writes its result, so the destination has to be a UAV.
++    desc.Flags = D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS;
++
++    ID3D12Resource* res = nullptr;
++    device->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &desc,
++                                    D3D12_RESOURCE_STATE_UNORDERED_ACCESS, nullptr, IID_PPV_ARGS(&res));
++    return res;
++}
++
++void Barrier(ID3D12GraphicsCommandList* cmdList, ID3D12Resource* res, D3D12_RESOURCE_STATES from,
++             D3D12_RESOURCE_STATES to)
++{
++    if (from == to)
++        return;
++
++    D3D12_RESOURCE_BARRIER b {};
++    b.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
++    b.Transition.pResource = res;
++    b.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
++    b.Transition.StateBefore = from;
++    b.Transition.StateAfter = to;
++    cmdList->ResourceBarrier(1, &b);
++}
++
++// A typeless resource cannot be viewed, and NGX builds its own views with nothing to tell it which
++// format to use. Depth is very often declared typeless, so the typed member of the same family is
++// substituted; CopyResource accepts that as a destination for the typeless original.
++DXGI_FORMAT TypedGuideFormat(DXGI_FORMAT f)
++{
++    switch (f)
++    {
++    case DXGI_FORMAT_R32_TYPELESS:
++        return DXGI_FORMAT_R32_FLOAT;
++    case DXGI_FORMAT_R16_TYPELESS:
++        return DXGI_FORMAT_R16_UNORM;
++    case DXGI_FORMAT_R24G8_TYPELESS:
++        return DXGI_FORMAT_R24_UNORM_X8_TYPELESS;
++    case DXGI_FORMAT_R32G8X24_TYPELESS:
++        return DXGI_FORMAT_R32_FLOAT_X8X24_TYPELESS;
++    case DXGI_FORMAT_R32G32_TYPELESS:
++        return DXGI_FORMAT_R32G32_FLOAT;
++    case DXGI_FORMAT_R16G16_TYPELESS:
++        return DXGI_FORMAT_R16G16_FLOAT;
++    case DXGI_FORMAT_R8G8B8A8_TYPELESS:
++        return DXGI_FORMAT_R8G8B8A8_UNORM;
++    case DXGI_FORMAT_R16G16B16A16_TYPELESS:
++        return DXGI_FORMAT_R16G16B16A16_FLOAT;
++    default:
++        return f;
++    }
++}
++
++bool IsTypeless(DXGI_FORMAT f) { return TypedGuideFormat(f) != f; }
++
++// Creates a typed twin of a guide buffer, matching everything but the format.
++ID3D12Resource* CreateGuideClone(ID3D12Device* device, ID3D12Resource* source)
++{
++    D3D12_RESOURCE_DESC desc = source->GetDesc();
++    desc.Format = TypedGuideFormat(desc.Format);
++    desc.Flags = D3D12_RESOURCE_FLAG_NONE;
++
++    D3D12_HEAP_PROPERTIES heap {};
++    heap.Type = D3D12_HEAP_TYPE_DEFAULT;
++
++    ID3D12Resource* res = nullptr;
++    device->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &desc, D3D12_RESOURCE_STATE_COPY_DEST,
++                                    nullptr, IID_PPV_ARGS(&res));
++    return res;
++}
++
++// Hands back something the model can actually read: the guide itself when it is typed, or a typed copy
++// of it when it is not. NGX requires its inputs in NON_PIXEL_SHADER_RESOURCE at evaluate time, which is
++// a documented contract rather than a guess about any one game's frame graph, so that is the state
++// transitioned away from and back to here.
++ID3D12Resource* ReadableGuide(ID3D12Device* device, ID3D12GraphicsCommandList* cmdList,
++                              ID3D12Resource* source, ID3D12Resource** clone)
++{
++    if (source == nullptr || !IsTypeless(source->GetDesc().Format))
++        return source;
++
++    if (*clone == nullptr)
++    {
++        *clone = CreateGuideClone(device, source);
++
++        if (*clone == nullptr)
++            return nullptr;
++
++        LOG_DEBUG("DLSS-NR cloned a typeless guide as format {}",
++                 (int) TypedGuideFormat(source->GetDesc().Format));
++    }
++
++    Barrier(cmdList, source, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE,
++            D3D12_RESOURCE_STATE_COPY_SOURCE);
++    cmdList->CopyResource(*clone, source);
++    Barrier(cmdList, source, D3D12_RESOURCE_STATE_COPY_SOURCE,
++            D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
++    Barrier(cmdList, *clone, D3D12_RESOURCE_STATE_COPY_DEST,
++            D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
++    return *clone;
++}
++
++// The upscaler's own names differ between super resolution and ray reconstruction, and only one set is
++// present on any given block.
++// Whether a surface can physically hold linear HDR.
++//
++// Only a float format can: linear light is open-ended and runs far past 1.0, which a normalised
++// integer surface cannot represent. An 8-bit UNORM frame is finished, display-referred output, and
++// so is a 10-bit one -- HDR10 is PQ-encoded, which is display-referred too.
++//
++// The game's IsHDR flag is a statement of intent that is not always true, and believing it over a
++// format that cannot hold linear light means encoding an already-encoded frame a second time.
++bool FormatCanHoldLinearHdr(DXGI_FORMAT format)
++{
++    switch (format)
++    {
++    case DXGI_FORMAT_R16G16B16A16_FLOAT:
++    case DXGI_FORMAT_R16G16B16A16_TYPELESS:
++    case DXGI_FORMAT_R32G32B32A32_FLOAT:
++    case DXGI_FORMAT_R32G32B32A32_TYPELESS:
++    case DXGI_FORMAT_R32G32B32_FLOAT:
++    case DXGI_FORMAT_R11G11B10_FLOAT:
++        return true;
++    default:
++        return false;
++    }
++}
++
++ID3D12Resource* GetResource(NVSDK_NGX_Parameter* params, const char* a, const char* b)
++{
++    ID3D12Resource* res = nullptr;
++
++    if (params->Get(a, &res) == NVSDK_NGX_Result_Success && res != nullptr)
++        return res;
++
++    res = nullptr;
++
++    if (params->Get(b, &res) == NVSDK_NGX_Result_Success && res != nullptr)
++        return res;
++
++    // The same key again, as a plain pointer.
++    //
++    // NVSDK_NGX_Parameter has a typed setter per resource kind and an untyped one, and on a real NGX
++    // parameter block those are separate slots: what goes in through Set(name, void*) does not come
++    // back out of Get(name, ID3D12Resource**). A game running its own D3D12 upscaler sets these
++    // typed, so the typed read above is enough and always was.
++    //
++    // Both of OptiScaler's bridges write them untyped. IFeature_Dx11wDx12 and IFeature_VkwDx12 turn
++    // the game's D3D11 textures or Vulkan images into D3D12 resources and hand them over with
++    // Set(name, (void*) resource) -- so the typed read came back null a few lines after the resource
++    // had been written, and the pass quietly did nothing. That is the whole reason this never ran in
++    // a DirectX 11 or Vulkan game.
++    void* untyped = nullptr;
++
++    if (params->Get(a, &untyped) == NVSDK_NGX_Result_Success && untyped != nullptr)
++        return static_cast<ID3D12Resource*>(untyped);
++
++    untyped = nullptr;
++
++    if (params->Get(b, &untyped) == NVSDK_NGX_Result_Success && untyped != nullptr)
++        return static_cast<ID3D12Resource*>(untyped);
++
++    return nullptr;
++}
++
++// A change has to hold still before it is acted on: a slider being dragged reports a new value every
++// frame, and each one would otherwise mean a new model.
++constexpr unsigned long long kSettleFrames = 30;
++
++// The extras the official integration sets: global tone (read at create) and the interface inputs.
++// Written before every create and evaluate, nulls included, so nothing stale ever sits in the block.
++void SetExtras(const Config& cfg, ID3D12Resource* ui, ID3D12Resource* backbuffer, unsigned int uiWidth,
++               unsigned int uiHeight, unsigned int bbWidth, unsigned int bbHeight)
++{
++    if (g_nr.setExtras == nullptr || g_nr.capabilityParams == nullptr)
++        return;
++
++    // Global tone is written at the model's own default: the control that exposed it changed nothing
++    // that could be seen, and the block persists, so a value still has to be put there.
++    g_nr.setExtras(g_nr.capabilityParams, 1.0f, ui, ui, backbuffer,
++                   uiWidth, uiHeight, bbWidth, bbHeight);
++}
++
++bool TuningMatchesFeature(const Config& cfg)
++{
++    return g_nr.builtPreset == cfg.DlssNrPreset.value_or_default() &&
++           g_nr.builtIntensity == cfg.DlssNrIntensity.value_or_default() &&
++           g_nr.builtStyle == cfg.DlssNrStyle.value_or_default() &&
++           g_nr.builtLocalStructure == cfg.DlssNrLocalStructure.value_or_default() &&
++           g_nr.builtLocalTone == cfg.DlssNrLocalTone.value_or_default() &&
++           g_nr.builtSkinStructure == cfg.DlssNrSkinStructure.value_or_default() &&
++           g_nr.builtAutoMask == cfg.DlssNrAutoMask.value_or_default();
++}
++
++void RecordBuiltTuning(const Config& cfg)
++{
++    g_nr.builtPreset = cfg.DlssNrPreset.value_or_default();
++    g_nr.builtIntensity = cfg.DlssNrIntensity.value_or_default();
++    g_nr.builtStyle = cfg.DlssNrStyle.value_or_default();
++    g_nr.builtLocalStructure = cfg.DlssNrLocalStructure.value_or_default();
++    g_nr.builtLocalTone = cfg.DlssNrLocalTone.value_or_default();
++    g_nr.builtSkinStructure = cfg.DlssNrSkinStructure.value_or_default();
++    g_nr.builtAutoMask = cfg.DlssNrAutoMask.value_or_default();
++}
++
++} // namespace
++
++namespace DlssNr
++{
++// Guards the module's state. Every caller is now on the game's render thread, so this is no longer
++// holding two threads apart -- but the D3D11-on-D3D12 bridge enters from its own call site, and the
++// cost is a CPU-side lock on a path that already records command lists.
++std::mutex g_nrMutex;
++
++void RetryAfterFailure()
++{
++    g_nr.failed = false;
++    g_nr.reason = "";
++    g_nr.reset = true;
++
++}
++
++// Every way out of the pass before it does anything is silent on purpose -- an evaluate that carries
++// no depth is normal and would otherwise print every frame forever. That silence is fine until the
++// pass does nothing at all and the log has no opinion about why.
++//
++// So each distinct reason is reported once. Once, not once per frame.
++void ReportSkipOnce(const char* reason)
++{
++    static std::set<std::string> seen;
++
++    if (seen.insert(reason).second)
++        LOG_INFO("DLSS-NR did not run: {}", reason);
++}
++
++void EvaluateAfterUpscale(ID3D12GraphicsCommandList* cmdList, NVSDK_NGX_Parameter* params,
++                          ID3D12CommandQueue* timingQueue)
++{
++    std::lock_guard<std::mutex> nrLock(g_nrMutex);
++    const Config& cfg = *Config::Instance();
++
++    if (!cfg.DlssNrEnabled.value_or_default())
++    {
++        ReportSkipOnce("it is switched off");
++        return;
++    }
++
++    if (g_nr.failed || cmdList == nullptr || params == nullptr)
++    {
++        ReportSkipOnce(g_nr.failed ? "it already failed this session"
++                                   : "no command list or no parameter block");
++        return;
++    }
++
++    ID3D12Resource* target = GetResource(params, NVSDK_NGX_Parameter_Output, "DLSSD.Output");
++    ID3D12Resource* depth = GetResource(params, NVSDK_NGX_Parameter_Depth, "DLSSD.Depth");
++    ID3D12Resource* motion = GetResource(params, NVSDK_NGX_Parameter_MotionVectors, "DLSSD.MotionVectors");
++
++    // Without all three there is nothing to run on. This is not a failure -- some evaluates legitimately
++    // carry none of it -- so it stays quiet and tries again next frame.
++    if (target == nullptr || depth == nullptr || motion == nullptr)
++    {
++        ReportSkipOnce(target == nullptr    ? "the parameters carried no output texture"
++                       : depth == nullptr   ? "the parameters carried no depth"
++                                            : "the parameters carried no motion vectors");
++        return;
++    }
++
++    ID3D12Device* device = nullptr;
++
++    if (FAILED(target->GetDevice(IID_PPV_ARGS(&device))) || device == nullptr)
++    {
++        ReportSkipOnce("the output texture belongs to no D3D12 device");
++        return;
++    }
++
++    const D3D12_RESOURCE_DESC desc = target->GetDesc();
++    const auto width = (unsigned int) desc.Width;
++    const auto height = desc.Height;
++
++    // Depth and motion vectors are the upscaler's inputs and so are at render resolution, while colour
++    // and output are at display resolution. The model takes that as a subrect per resource rather than
++    // needing them resampled, which is why nothing here rescales anything.
++    unsigned int guideWidth = 0;
++    unsigned int guideHeight = 0;
++    params->Get(NVSDK_NGX_Parameter_Width, &guideWidth);
++    params->Get(NVSDK_NGX_Parameter_Height, &guideHeight);
++
++    if (guideWidth == 0 || guideHeight == 0)
++    {
++        guideWidth = width;
++        guideHeight = height;
++    }
++
++    // The game states its depth convention in the flags it created its own feature with, so there is no
++    // reason to assume one.
++    unsigned int createFlags = 0;
++    params->Get(NVSDK_NGX_Parameter_DLSS_Feature_Create_Flags, &createFlags);
++    const bool gameSaysInverted = (createFlags & NVSDK_NGX_DLSS_Feature_Flags_DepthInverted) != 0;
++
++    g_nr.guideDepthInverted = gameSaysInverted;
++
++    // And it states how its motion vectors are encoded. Inventing a resolution ratio here meant handing
++    // the model vectors it could not interpret.
++    float mvScaleX = 1.0f;
++    float mvScaleY = 1.0f;
++
++    if (params->Get(NVSDK_NGX_Parameter_MV_Scale_X, &mvScaleX) != NVSDK_NGX_Result_Success)
++        mvScaleX = 1.0f;
++
++    if (params->Get(NVSDK_NGX_Parameter_MV_Scale_Y, &mvScaleY) != NVSDK_NGX_Result_Success)
++        mvScaleY = 1.0f;
++
++    // Two factors, and both are needed. The game's own scale turns its vectors into render pixels --
++    // Cyberpunk reports 1920 x 1080, so its vectors are normalised. The upscale ratio then carries
++    // render pixels onto a display-resolution image. They coincide only at native resolution, which is
++    // exactly where this was first tested.
++    const float upscaleX = guideWidth != 0 ? (float) width / (float) guideWidth : 1.0f;
++    const float upscaleY = guideHeight != 0 ? (float) height / (float) guideHeight : 1.0f;
++    // The game's own encoding, times the resolution ratio.
++    // The game's own encoding, and nothing else.
++    //
++    // Multiplying by the upscale ratio was reasoning, not measurement, and it was only ever exercised
++    // at native resolution where the ratio is 1 and the mistake is invisible. Every resource already
++    // carries its own subrect -- MVecSubrectWidth and Height say the motion texture is render sized --
++    // so the model is told the size twice and scales for it twice. Vectors come out half again too
++    // long and the model warps its history past where the surface actually went, which smears the
++    // frame along the direction of motion.
++    g_nr.guideMvScaleX = mvScaleX;
++    g_nr.guideMvScaleY = mvScaleY;
++    (void) upscaleX;
++    (void) upscaleY;
++
++    static bool reportedGuides = false;
++
++    if (!reportedGuides)
++    {
++        reportedGuides = true;
++        LOG_INFO("DLSS-NR guides: depth {}, motion vector scale {} x {} (the game says {} x {}, times "
++                 "the {}x{} upscale ratio)",
++                 g_nr.guideDepthInverted ? "inverted" : "not inverted", g_nr.guideMvScaleX,
++                 g_nr.guideMvScaleY, mvScaleX, mvScaleY, upscaleX, upscaleY);
++    }
++
++    if (cfg.DlssNrProxyProbe.value_or_default())
++        ProbeProxyDispatch(cmdList);
++
++    if (!EnsureForwarder() || !EnsureCapabilityParams(device))
++    {
++        g_nr.failed = true;
++        LOG_ERROR("DLSS-NR unavailable: {}", g_nr.reason);
++        device->Release();
++        return;
++    }
++
++    // What the model works at. The frame and its edit stay full resolution; only the model's input and
++    // answer shrink, and the resolve enlarges the answer while compositing.
++    float workScale = cfg.DlssNrWorkingScale.value_or_default();
++    workScale = workScale < 0.25f ? 0.25f : (workScale > 1.0f ? 1.0f : workScale);
++    const auto workWidth = (unsigned int) (width * workScale + 0.5f);
++    const auto workHeight = (unsigned int) (height * workScale + 0.5f);
++    const bool reduced = workWidth != width || workHeight != height;
++
++    ReleaseSurfacesIfFormatChanged(desc.Format);
++
++    const bool resolutionChanged = g_nr.width != width || g_nr.height != height ||
++                                   g_nr.workWidth != workWidth || g_nr.workHeight != workHeight;
++
++    // The model reads its tuning once, while the feature is built, so a changed setting only takes
++    // effect when the feature is rebuilt. TuningMatchesFeature was written to notice that and then
++    // never called, which is why every one of these controls appeared to do nothing until something
++    // else -- a resolution change -- happened to force a rebuild by accident.
++    const bool tuningChanged = !TuningMatchesFeature(cfg);
++
++    if (g_nr.feature != nullptr && (resolutionChanged || tuningChanged))
++    {
++        // Parked rather than released: with frame generation the GPU can still be several frames
++        // deep in work that references all of it.
++        ParkNrFeature(g_nr.feature);
++
++        // Only a resolution change invalidates the scratch textures. Tuning does not, and throwing
++        // them away for it would mean a reallocation every time a slider moves.
++        if (resolutionChanged)
++        {
++            ParkNrResource(g_nr.output);
++            ParkNrResource(g_nr.colorCopy);
++            ParkNrResource(g_nr.hdrCopy);
++            ParkNrResource(g_nr.colorSmall);
++        }
++    }
++
++    if (g_nr.output == nullptr)
++    {
++        g_nr.output = CreateScratch(device, desc.Format, workWidth, workHeight);
++        g_nr.colorCopy = CreateScratch(device, desc.Format, width, height);
++        g_nr.hdrCopy = CreateScratch(device, desc.Format, width, height);
++        g_nr.workWidth = workWidth;
++        g_nr.workHeight = workHeight;
++    }
++
++    if (reduced && g_nr.colorSmall == nullptr)
++        g_nr.colorSmall = CreateScratch(device, desc.Format, workWidth, workHeight);
++
++    if (g_nr.feature == nullptr && g_nr.output != nullptr && g_nr.colorCopy != nullptr &&
++        g_nr.hdrCopy != nullptr)
++    {
++        auto snippet = Util::FindFilePath(g_dllDir, "nvngx_dlssnr.dll");
++
++        if (!snippet.has_value())
++            snippet = Util::FindFilePath(Util::ExePath().remove_filename(), "nvngx_dlssnr.dll");
++
++        if (!snippet.has_value())
++        {
++            g_nr.failed = true;
++            g_nr.reason = "nvngx_dlssnr.dll was not found beside OptiScaler or the game";
++            LOG_ERROR("DLSS-NR unavailable: {}", g_nr.reason);
++            device->Release();
++            return;
++        }
++
++        SetExtras(cfg, nullptr, nullptr, 0, 0, 0, 0);
++        g_nr.feature =
++            g_nr.create(snippet->wstring().c_str(), State::Instance().NVNGX_ApplicationDataPath.c_str(),
++                        device, cmdList, g_nr.capabilityParams, workWidth, workHeight,
++                        (int) cfg.DlssNrPreset.value_or_default(),
++                        cfg.DlssNrIntensity.value_or_default(), (int) cfg.DlssNrStyle.value_or_default(),
++                        cfg.DlssNrLocalStructure.value_or_default(), cfg.DlssNrLocalTone.value_or_default(),
++                        cfg.DlssNrSkinStructure.value_or_default(),
++                        cfg.DlssNrAutoMask.value_or_default() ? 1 : 0,
++                        // UI correction at the model's own default: with no UI layer fed to it there
++                        // is nothing for it to correct.
++                        1);
++
++        if (g_nr.feature == nullptr)
++        {
++            g_nr.failed = true;
++            g_nr.reason = "the model would not initialise";
++            const auto initResult = (unsigned int) (g_nr.lastInit != nullptr ? *g_nr.lastInit : 0);
++            const auto createResult = (unsigned int) (g_nr.lastCreate != nullptr ? *g_nr.lastCreate : 0);
++
++            // Cast before formatting. These are ints, and "0x{:X}" on a negative int prints
++            // 0x-452FFFFF, which no one can decode back to 0xBAD00001.
++            LOG_ERROR("DLSS-NR create failed: init 0x{:X} ({}), create 0x{:X} ({})", initResult,
++                      NgxResultName(initResult), createResult, NgxResultName(createResult));
++            device->Release();
++            return;
++        }
++
++        g_nr.width = width;
++        g_nr.height = height;
++        g_nr.reset = true;
++        RecordBuiltTuning(cfg);
++        LOG_INFO("DLSS-NR running at {}x{}, guides {}x{} (preset {}, intensity {}, style {})", width,
++                 height, guideWidth, guideHeight, g_nr.builtPreset, g_nr.builtIntensity, g_nr.builtStyle);
++
++        // Creating and evaluating a feature in the same command list is the dice-roll that hung the
++        // GPU (every crash died on a creation frame). The creation goes through the game's own submit
++        // first; the first evaluate happens next frame. One frame without the model is invisible.
++        device->Release();
++        return;
++    }
++
++    if (g_nr.feature == nullptr)
++    {
++        device->Release();
++        return;
++    }
++
++    // The upscaler has just written this, so it is a UAV. The model needs it readable.
++    // Whether the buffer the upscaler just wrote is linear HDR or an already tone-mapped picture is not
++    // something to assume: the game says so, in the flags it created its own DLSS feature with. Running
++    // the colour transform over a frame that has already been through a tonemapper is pure damage, and
++    // skipping it on one that has not leaves the model reading ordinary values as enormously bright.
++    unsigned int dlssFlags = 0;
++    params->Get(NVSDK_NGX_Parameter_DLSS_Feature_Create_Flags, &dlssFlags);
++    // Both have to agree: the flag says what the game intends, the format says what the surface can
++    // actually hold.
++    const bool gameSaysHdr = (dlssFlags & NVSDK_NGX_DLSS_Feature_Flags_IsHDR) != 0;
++    const bool isHdrBuffer = gameSaysHdr && FormatCanHoldLinearHdr(desc.Format);
++
++    static bool reportedHdr = false;
++
++    if (!reportedHdr)
++    {
++        reportedHdr = true;
++        LOG_INFO("DLSS-NR: the game's DLSS buffer is {} (create flags 0x{:X}), so the colour transform is {}",
++                 isHdrBuffer ? "linear HDR" : "already tone-mapped", dlssFlags,
++                 isHdrBuffer ? "on" : "off");
++    }
++
++    if (g_compose == nullptr)
++        g_compose = std::make_unique<DlssNr_Dx12>("Neural Rendering", device);
++
++    const bool haveCodec = g_compose->IsInit();
++
++    if (!haveCodec)
++    {
++        g_nr.failed = true;
++        g_nr.reason = "the colour codec would not compile";
++        LOG_ERROR("DLSS-NR unavailable: {}", g_nr.reason);
++        device->Release();
++        return;
++    }
++
++    // What the upscaler produces is linear HDR with an open-ended range; the model was trained on
++    // finished, sRGB-encoded frames. The white point is what maps one to the other, and it is a property
++    // of the game's exposure rather than a number worth asking anyone to guess: measured means of 0.065,
++    // 1.8 and 185 have all been seen in this one game.
++    ++g_frames;
++    TickNrRetired();
++    CheckCaptureTrigger();
++
++    if (g_captureWriteAtFrame != 0 && g_frames >= g_captureWriteAtFrame)
++    {
++        g_captureWriteAtFrame = 0;
++        const auto captureDir = Util::DllPath().remove_filename() / "dlssnr-capture";
++        const auto written = g_capture.write(captureDir);
++
++        if (!written.empty())
++            LOG_INFO("DLSS-NR wrote matched before/after frames to {}", written);
++    }
++
++    // Paper white, and nothing else. The frame is divided by this and encoded, and the soft knee
++    // above 0.75 takes whatever is left over.
++    //
++    // It used to be divided by a white point measured from the frame -- around 3 in Cyberpunk -- which
++    // was right for the old composition, where the encode had to be inverted and highlights therefore
++    // had to survive it. Under the composition this now uses it is actively wrong twice over: the
++    // model is handed a picture three times darker than it should see, and the highlight branch is
++    // defeated. That branch hands back `originalLuma - proxyLuma`, the headroom the proxy could not
++    // represent -- it exists precisely because the proxy is meant to clip. Normalising the highlights
++    // away first leaves it nothing to give back.
++    const float whitePoint = cfg.DlssNrWhitePointScale.value_or_default();
++
++    if (g_gpuTime == nullptr)
++        g_gpuTime = std::make_unique<GpuTime_Dx12>(device);
++
++    if (g_gpuTime != nullptr)
++        g_gpuTime->Start(cmdList);
++
++    DlssNrConstants encodeParams {};
++    encodeParams.Mode = DlssNrMode_Encode;
++    // A frame that is already display-referred is handed over untouched: the encode becomes a copy and
++    // the resolve adds the model's edit back at full scale.
++    encodeParams.Passthrough = isHdrBuffer ? 0u : 1u;
++    encodeParams.WhitePoint = whitePoint;
++    // Match only takes effect once a fit exists; until then the table is empty and the shader would
++    // read a curve of zeros, so it falls back to the plain proxy.
++    encodeParams.Width = width;
++    encodeParams.Height = height;
++
++    Barrier(cmdList, target, D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
++            D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
++    g_compose->Dispatch(cmdList, encodeParams, target, nullptr, nullptr, nullptr, nullptr,
++                        g_nr.colorCopy, g_nr.hdrCopy);
++
++    Barrier(cmdList, target, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE,
++            D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
++    // The transitions double as the wait for the encode's writes.
++    Barrier(cmdList, g_nr.colorCopy, D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
++            D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
++    Barrier(cmdList, g_nr.hdrCopy, D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
++            D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
++
++    // Below full resolution the model is shown a filtered shrink of the proxy; the edit it returns is
++    // enlarged during the resolve while the frame underneath stays full size and untouched.
++    ID3D12Resource* modelInput = g_nr.colorCopy;
++
++    if (reduced && g_nr.colorSmall != nullptr)
++    {
++        DlssNrConstants down {};
++        down.Mode = DlssNrMode_Downsample;
++        down.Width = workWidth;
++        down.Height = workHeight;
++        g_compose->Dispatch(cmdList, down, modelInput, nullptr, nullptr, nullptr, nullptr,
++                            g_nr.colorSmall, nullptr);
++        Barrier(cmdList, g_nr.colorSmall, D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
++                D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
++        modelInput = g_nr.colorSmall;
++    }
++
++    ID3D12Resource* depthIn = ReadableGuide(device, cmdList, depth, &g_nr.depthClone);
++    ID3D12Resource* motionIn = ReadableGuide(device, cmdList, motion, &g_nr.motionClone);
++
++    if (depthIn == nullptr || motionIn == nullptr)
++    {
++        g_nr.failed = true;
++        g_nr.reason = "the game's depth or motion vectors could not be made readable";
++        LOG_ERROR("DLSS-NR unavailable: {}", g_nr.reason);
++        device->Release();
++        return;
++    }
++
++    // The vectors were scaled to full-frame pixels; the image the model reprojects is the working size.
++    const float mvToWork = width != 0 ? (float) workWidth / (float) width : 1.0f;
++
++    SetExtras(cfg, nullptr, nullptr, 0, 0, 0, 0);
++
++    // The proxy path, when asked for. Same inputs, same model -- the difference is who calls it.
++    //
++    // Nothing falls back automatically. A silent fallback would mean never finding out the proxy
++    // path was broken: the picture would look right either way, because the forwarder would be
++    // quietly doing the work.
++    if (cfg.DlssNrUseProxy.value_or_default())
++    {
++        const unsigned int proxyResult = DlssNr::Proxy::Run(
++            cmdList, device, modelInput, depthIn, motionIn, g_nr.output, workWidth, workHeight,
++            guideWidth, guideHeight, g_nr.guideDepthInverted, g_nr.reset,
++            g_nr.guideMvScaleX * mvToWork, g_nr.guideMvScaleY * mvToWork);
++
++        g_nr.reset = false;
++
++        if (proxyResult != 1)
++        {
++            g_nr.failed = true;
++            g_nr.reason = "the proxy path could not run the model";
++            LOG_ERROR("DLSS-NR (proxy): evaluate returned 0x{:X} ({}), disabling for this session",
++                      proxyResult, NgxResultName(proxyResult));
++        }
++
++        device->Release();
++        return;
++    }
++
++    const int result = g_nr.evaluate(
++        cmdList, g_nr.feature, g_nr.capabilityParams, modelInput, depthIn, motionIn, g_nr.output,
++        workWidth, workHeight, guideWidth, guideHeight, g_nr.guideDepthInverted ? 1 : 0,
++        g_nr.reset ? 1 : 0, cfg.DlssNrIntensity.value_or_default(),
++        (int) cfg.DlssNrStyle.value_or_default(), cfg.DlssNrLocalStructure.value_or_default(),
++        cfg.DlssNrLocalTone.value_or_default(), cfg.DlssNrSkinStructure.value_or_default(),
++        cfg.DlssNrAutoMask.value_or_default() ? 1 : 0, g_nr.guideMvScaleX * mvToWork,
++        g_nr.guideMvScaleY * mvToWork);
++
++    g_nr.reset = false;
++
++    // Once, a few seconds in, so it lands after the values have been written at least once.
++    static bool tuningReported = false;
++
++    if (!tuningReported && g_frames > 240)
++    {
++        tuningReported = true;
++
++        // At INFO, because whether the model actually took a value is the only way to tell a
++        // control that does nothing from one that is not being written.
++        auto report = [](const char* name, float wrote)
++        {
++            float value = 0.0f;
++            const NVSDK_NGX_Result r = g_nr.capabilityParams->Get(name, &value);
++            LOG_INFO("DLSS-NR readback {} -> {} (we wrote {}, result 0x{:X})", name, value, wrote,
++                     (uint32_t) r);
++        };
++
++        const Config& rcfg = *Config::Instance();
++        report("DLSSNR.Intensity", rcfg.DlssNrIntensity.value_or_default());
++        report("DLSSNR.LocalStructureStrength", rcfg.DlssNrLocalStructure.value_or_default());
++        report("DLSSNR.LocalToneStrength", rcfg.DlssNrLocalTone.value_or_default());
++        report("DLSSNR.SkinStructureStrength", rcfg.DlssNrSkinStructure.value_or_default());
++
++        unsigned int style = 0;
++        const NVSDK_NGX_Result styleResult = g_nr.capabilityParams->Get("DLSSNR.Style", &style);
++        LOG_DEBUG("DLSS-NR readback DLSSNR.Style -> {} (result 0x{:X})", style, (uint32_t) styleResult);
++
++        // The preset is the last control whose arrival has never been checked, and three of them look
++        // identical in play. Either it is not landing or the presets really are alike.
++        unsigned int preset = 0;
++        const NVSDK_NGX_Result presetResult =
++            g_nr.capabilityParams->Get("DLSSNR.Hint.Render.Preset", &preset);
++        LOG_DEBUG("DLSS-NR readback DLSSNR.Hint.Render.Preset -> {} (result 0x{:X}, we wrote {})", preset,
++                 (uint32_t) presetResult, cfg.DlssNrPreset.value_or_default());
++
++        LOG_DEBUG("DLSS-NR wrote intensity {}, local structure {}, local tone {}, skin {}, style {}",
++                 cfg.DlssNrIntensity.value_or_default(), cfg.DlssNrLocalStructure.value_or_default(),
++                 cfg.DlssNrLocalTone.value_or_default(), cfg.DlssNrSkinStructure.value_or_default(),
++                 cfg.DlssNrStyle.value_or_default());
++    }
++
++    if (result == NVSDK_NGX_Result_Success)
++    {
++        // Resolve takes the difference between what the model returned and what it was shown, and adds
++        // that back to the frame. At strength zero the result is what the upscaler produced, exactly, and
++        // anything the model left alone is untouched rather than round-tripped through the curve.
++        DlssNrConstants resolveParams {};
++        resolveParams.Mode = DlssNrMode_Resolve;
++        resolveParams.WhitePoint = whitePoint;
++        resolveParams.Width = width;
++        resolveParams.Height = height;
++        resolveParams.TransferStrength = cfg.DlssNrTransferStrength.value_or_default();
++        resolveParams.ColourStrength = cfg.DlssNrColourStrength.value_or_default();
++        resolveParams.DebugView = cfg.DlssNrDebugView.value_or_default();
++        resolveParams.MaxRatio = cfg.DlssNrMaxRatio.value_or_default();
++        resolveParams.Passthrough = isHdrBuffer ? 0u : 1u;
++        resolveParams.CompareMode = cfg.DlssNrCompare.value_or_default();
++        resolveParams.CompareSplit = cfg.DlssNrCompareSplit.value_or_default();
++        resolveParams.CompareZoom = std::max(1.0f, cfg.DlssNrCompareZoom.value_or_default());
++        resolveParams.CompareSwap = cfg.DlssNrCompareSwap.value_or_default() ? 1u : 0u;
++
++        Barrier(cmdList, g_nr.output, D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
++                D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
++        g_compose->Dispatch(cmdList, resolveParams, modelInput, g_nr.output, g_nr.hdrCopy, motionIn,
++                            nullptr, target, nullptr);
++        Barrier(cmdList, g_nr.output, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE,
++                D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
++
++        // On-demand capture works in this path too: the staging copy still holds the frame as the
++        // upscaler produced it, and the edited frame is the output itself. The write happens a few
++        // frames later, once the GPU is certainly past these copies -- this path has no fence of its
++        // own.
++        if (g_capture.isActive())
++        {
++            g_capture.record(cmdList, device, g_nr.colorCopy,
++                             D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE, target,
++                             D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
++
++            if (g_capture.readyToWrite() && g_captureWriteAtFrame == 0)
++                g_captureWriteAtFrame = g_frames + 8;
++        }
++    }
++    else
++    {
++        g_nr.failed = true;
++        g_nr.reason = "the model refused to run";
++        LOG_ERROR("DLSS-NR evaluate returned 0x{:X} ({}), disabling for this session", (uint32_t) result,
++                  NgxResultName((unsigned int) result));
++    }
++
++    Barrier(cmdList, g_nr.hdrCopy, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE,
++            D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
++
++    if (g_gpuTime != nullptr)
++    {
++        g_gpuTime->End(cmdList);
++
++        // This path records into the game's own list, so there is no queue of ours to read from.
++        // A caller that knows which queue the list goes to says so; otherwise the one the upscaler was
++        // invoked on serves. The bridges have to say, because they run on a queue of their own that
++        // State never learns about -- a Vulkan game creates no D3D12 swapchain, so nothing ever sets
++        // currentCommandQueue and the cost went unreported.
++        auto* queue = timingQueue != nullptr ? timingQueue
++                                             : (ID3D12CommandQueue*) State::Instance().currentCommandQueue;
++
++        if (queue != nullptr)
++        {
++            if (auto ms = g_gpuTime->ReadGpuTime(queue); ms.has_value())
++                g_lastGpuTime = ms;
++        }
++    }
++
++    // Put any guide clones back where the next frame's copy expects to find them.
++    if (g_nr.depthClone != nullptr)
++        Barrier(cmdList, g_nr.depthClone, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE,
++                D3D12_RESOURCE_STATE_COPY_DEST);
++
++    if (g_nr.motionClone != nullptr)
++        Barrier(cmdList, g_nr.motionClone, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE,
++                D3D12_RESOURCE_STATE_COPY_DEST);
++
++    if (reduced && g_nr.colorSmall != nullptr)
++        Barrier(cmdList, g_nr.colorSmall, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE,
++                D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
++
++    // Leave the staging copy as the next frame expects to find it.
++    Barrier(cmdList, g_nr.colorCopy, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE,
++            D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
++
++    device->Release();
++}
++
++bool IsRunning() { return g_nr.feature != nullptr && !g_nr.failed; }
++
++const char* FailureReason() { return g_nr.failed ? g_nr.reason : ""; }
++
++std::optional<double> LastGpuTime() { return g_lastGpuTime; }
++
++void RequestCapture(unsigned int frames)
++{
++    ClearCaptureDirectory();
++    g_capture.request(frames);
++}
++
++bool CaptureInProgress() { return g_capture.isActive(); }
++
++void Shutdown()
++{
++    std::lock_guard<std::mutex> nrLock(g_nrMutex);
++
++    for (auto& r : g_nrRetired)
++    {
++        if (r.feature != nullptr && g_nr.release != nullptr)
++            g_nr.release(r.feature);
++
++        if (r.resource != nullptr)
++            r.resource->Release();
++    }
++
++    g_nrRetired.clear();
++
++    if (g_nr.feature != nullptr && g_nr.release != nullptr)
++        g_nr.release(g_nr.feature);
++
++    g_nr.feature = nullptr;
++
++    if (g_nr.output != nullptr)
++    {
++        g_nr.output->Release();
++        g_nr.output = nullptr;
++    }
++
++    if (g_nr.colorCopy != nullptr)
++    {
++        g_nr.colorCopy->Release();
++        g_nr.colorCopy = nullptr;
++    }
++
++    if (g_nr.hdrCopy != nullptr)
++    {
++        g_nr.hdrCopy->Release();
++        g_nr.hdrCopy = nullptr;
++    }
++
++    if (g_nr.colorSmall != nullptr)
++    {
++        g_nr.colorSmall->Release();
++        g_nr.colorSmall = nullptr;
++    }
++
++    if (g_nr.depthClone != nullptr)
++    {
++        g_nr.depthClone->Release();
++        g_nr.depthClone = nullptr;
++    }
++
++    if (g_nr.motionClone != nullptr)
++    {
++        g_nr.motionClone->Release();
++        g_nr.motionClone = nullptr;
++    }
++
++    g_capture.release();
++    g_gpuTime.reset();
++    g_lastGpuTime.reset();
++
++    g_compose.reset();
++}
++} // namespace DlssNr
++
+diff --git a/OptiScaler/dlssnr/DlssNr_Codec.h b/OptiScaler/dlssnr/DlssNr_Codec.h
+new file mode 100644
+index 00000000..e5e9d242
+--- /dev/null
++++ b/OptiScaler/dlssnr/DlssNr_Codec.h
+@@ -0,0 +1,562 @@
++// Turns the upscaler's linear HDR output into the kind of picture Neural Rendering was trained on, and
++// folds the model's answer back into the frame.
++//
++// Two passes:
++//
++//   ENCODE   linear HDR -> an sRGB-encoded picture in [0,1], plus an untouched copy of the frame. The
++//            picture is what the model is shown; the copy is what the answer is folded back into.
++//
++//   RESOLVE  proxy + model output + that copy -> the finished frame.
++//
++// The first version of this decoded the model's output back through the inverse of the tone curve, and
++// that is what turned every strip light in Cyberpunk into a string of coloured cells. Two reasons, both
++// fatal on highlights:
++//
++//   * The curve was applied per channel, so a saturated bright light had its channels compressed by
++//     different amounts and came back a different hue.
++//
++//   * x/(1-x) diverges as x approaches one. A light sitting at 0.99 in the encoded picture reconstructs
++//     to a hundred times the white point, and the model nudging one channel by a thousandth moves that
++//     by tens of percent. Highlights are exactly where the model has least to say and where the inverse
++//     amplifies most, which is the worst possible combination.
++//
++// The resolve does not reconstruct the frame by inverting that encode. It keeps the original and
++// rescales the model's own picture onto it, so nothing depends on the encode being invertible and a
++// bright pixel is never reconstructed from a compressed one. At zero strength the frame is
++// bit-for-bit what the upscaler produced.
++
++#pragma once
++
++#include <windows.h>
++#include <d3d12.h>
++#include <d3dcompiler.h>
++
++namespace codec
++{
++constexpr int MODE_ENCODE = 0;
++constexpr int MODE_RESOLVE = 1;
++// Shrinks the frame so the model can work on fewer pixels. Filtered, not point sampled: the guidance is
++// explicit that a nearest-neighbour enlargement of this pass turns into harsh aliasing.
++constexpr int MODE_DOWNSAMPLE = 2;
++// Debug views, so the model's contribution can be looked at rather than guessed at.
++constexpr int DEBUG_OFF = 0;
++constexpr int DEBUG_PROXY = 1;      // the picture the model was shown
++constexpr int DEBUG_MODEL = 2;      // the model's raw answer
++constexpr int DEBUG_DIFFERENCE = 3; // what it changed, amplified
++
++inline const char* kShaderSource = R"(
++cbuffer Params : register(b0)
++{
++    uint  gMode;
++    float gWhitePoint;
++    uint  gWidth;
++    uint  gHeight;
++    float gTransferStrength;
++    float gColourStrength;
++    uint  gDebugView;
++    float gMaxRatio;
++    uint  gPassthrough;
++    float gMvScaleX;     // motion vector units -> pixels of this dispatch
++    float gMvScaleY;
++    uint  gGuideWidth;   // the motion texture's valid region
++    uint  gGuideHeight;
++};
++
++// Colours outside the AP1 gamut are impossible on any display and read as sparkle where a bright
++// saturated pixel is pushed further. Clamping inside AP1 and coming back keeps everything reachable.
++float3 ClampAp1(float3 color)
++{
++    const float3x3 bt709_to_ap1 = { 0.613097, 0.339523, 0.047379,
++                                    0.070194, 0.916354, 0.013452,
++                                    0.020616, 0.109570, 0.869815 };
++    const float3x3 ap1_to_bt709 = { 1.705051, -0.621792, -0.083259,
++                                    -0.130256, 1.140805, -0.010548,
++                                    -0.024003, -0.128969, 1.152972 };
++    return mul(ap1_to_bt709, max(mul(bt709_to_ap1, color), float3(0.0, 0.0, 0.0)));
++}
++
++// ---------------------------------------------------------------------------------------------
++// The composition below (UpgradeToneMap's two-branch ratio, the OkLab hue correction, and the blend
++// between a luminance-only result and the model's own colour) is taken from RenoDX's DLSS 5 addon by
++// clshortfuse -- https://github.com/clshortfuse/renodx. It is their design, not ours; see
++// Licenses/RenoDX_LICENSE.txt. The OkLab matrices are Bjorn Ottosson's published constants and the
++// AP1, sRGB and PQ transforms are standard colour science.
++// ---------------------------------------------------------------------------------------------
++
++// OkLab, so the model's colour can be reached without its hue being invented on the way. A ratio
++// applied to an RGB triple does not move hue, but a difference added to one does -- which is what the
++// old composition did, and why a warm subject could come back green. Here the result's chroma is
++// rebuilt in the model's own hue direction and only its magnitude is taken from the scaled colour.
++float3 CbrtSigned(float3 v) { return sign(v) * pow(abs(v), 1.0 / 3.0); }
++
++float3 ToOkLab(float3 color)
++{
++    const float3x3 rgb_to_lms = { 0.4122214708, 0.5363325363, 0.0514459929,
++                                  0.2119034982, 0.6806995451, 0.1073969566,
++                                  0.0883024619, 0.2817188376, 0.6299787005 };
++    const float3x3 lms_to_lab = { 0.2104542553, 0.7936177850, -0.0040720468,
++                                  1.9779984951, -2.4285922050, 0.4505937099,
++                                  0.0259040371, 0.7827717662, -0.8086757660 };
++    return mul(lms_to_lab, CbrtSigned(mul(rgb_to_lms, color)));
++}
++
++float3 FromOkLab(float3 lab)
++{
++    const float3x3 lab_to_lms = { 1.0, 0.3963377774, 0.2158037573,
++                                  1.0, -0.1055613458, -0.0638541728,
++                                  1.0, -0.0894841775, -1.2914855480 };
++    const float3x3 lms_to_rgb = { 4.0767416621, -3.3077115913, 0.2309699292,
++                                  -1.2684380046, 2.6097574011, -0.3413193965,
++                                  -0.0041960863, -0.7034186147, 1.7076147010 };
++    float3 lms = mul(lab_to_lms, lab);
++    return mul(lms_to_rgb, lms * lms * lms);
++}
++
++// Takes the hue and the chroma direction from `correct`, and only the chroma magnitude from
++// `incorrect`. Scaling a colour by a luminance ratio changes how saturated it reads; this puts the
++// saturation back where the model meant it without letting the hue drift.
++float3 HueOkLab(float3 incorrect, float3 correct)
++{
++    float3 incorrectLab = ToOkLab(incorrect);
++    const float3 correctLab = ToOkLab(correct);
++    const float incorrectChroma = length(incorrectLab.yz);
++    const float correctChroma = length(correctLab.yz);
++    incorrectLab.yz = correctLab.yz * (correctChroma == 0.0 ? 1.0 : incorrectChroma / correctChroma);
++    return ClampAp1(FromOkLab(incorrectLab));
++}
++
++Texture2D<float4>   gSource   : register(t0);  // encode: the frame. resolve: the proxy.
++Texture2D<float4>   gModel    : register(t1);  // resolve: what the model returned.
++Texture2D<float4>   gOriginal : register(t2);  // resolve: the untouched frame.
++Texture2D<float4>   gMotion   : register(t3);  // resolve, accumulating: the game's motion vectors.
++RWTexture2D<float4> gTarget   : register(u0);  // encode: the proxy. resolve: the frame.
++RWTexture2D<float4> gKeep     : register(u1);  // encode: the untouched copy. resolve: the edit history.
++SamplerState        gLinear   : register(s0);  // so the edit can be read at a different size
++
++static const float3 kLuma = float3(0.2126, 0.7152, 0.0722);
++
++// sRGB rather than a plain 2.2 power: it is what an SDR game buffer actually carries, and the model was
++// trained on those.
++float3 LinearToSrgb(float3 v)
++{
++    v = saturate(v);
++    return lerp(v * 12.92, 1.055 * pow(max(v, 1e-8), 1.0 / 2.4) - 0.055, step(0.0031308, v));
++}
++
++float3 SrgbToLinear(float3 v)
++{
++    v = saturate(v);
++    return lerp(v / 12.92, pow((v + 0.055) / 1.055, 2.4), step(0.04045, v));
++}
++
++// The edit at an arbitrary position, exactly as the resolve computes its own.
++float3 EditAt(float2 uvq)
++{
++    float3 p = gSource.SampleLevel(gLinear, uvq, 0).rgb;
++    float3 m = gModel.SampleLevel(gLinear, uvq, 0).rgb;
++
++    if (gPassthrough == 0)
++    {
++        p = SrgbToLinear(p);
++        m = SrgbToLinear(m);
++    }
++
++    return m - p;
++}
++
++)" R"(
++[numthreads(8, 8, 1)]
++void main(uint3 id : SV_DispatchThreadID)
++{
++    if (id.x >= gWidth || id.y >= gHeight)
++        return;
++
++    // Normalised, so the source may be any size relative to this dispatch.
++    float2 uv = (float2(id.xy) + 0.5) / float2(gWidth, gHeight);
++
++    if (gMode == 2)
++    {
++        gTarget[id.xy] = gSource.SampleLevel(gLinear, uv, 0);
++        return;
++    }
++
++    if (gMode == 0)
++    {
++        float4 source = gSource.Load(int3(id.xy, 0));
++        float3 frame = max(source.rgb, float3(0.0, 0.0, 0.0));
++
++        // Kept so the resolve has the frame as it was, rather than having to reconstruct it.
++        gKeep[id.xy] = float4(frame, source.a);
++
++        // Some games hand DLSS a frame that has already been through their tonemapper. The game says
++        // which in its own DLSS creation flags, and converting one that needs no conversion is pure
++        // damage, so it goes through untouched.
++        if (gPassthrough != 0)
++        {
++            gTarget[id.xy] = float4(frame, source.a);
++            return;
++        }
++
++        // What the model is shown. Mode 2 -- the default -- scales the frame and encodes it, and that
++        // is all: the game is going to tone map this picture later, so tone mapping it here as well
++        // shows the model a doubly compressed image. Measured against Cyberpunk's own numbers, the
++        // Reinhard proxy handed the model a scene value of 1.0 as 0.55 and 1.5 as 0.64 -- flat, dark,
++        // and nothing like the finished frame it was trained on. The model then synthesised weakly,
++        // judged tone on a picture that does not exist, and its answer had to be un-crushed on the way
++        // back. Mode 0 keeps that old curve, mode 1 the fitted one.
++        float luma = dot(frame, kLuma);
++        float3 display = frame / max(gWhitePoint, 1e-4);
++
++        // A soft knee instead of a hard ceiling. Anything the curve leaves above 0.75 is rolled off
++        // rather than clipped, so the model is never shown a field of flat white whose blown pixels
++        // flip between frames -- unstable input is unstable output, and this is where a bright scene
++        // would produce it.
++        float displayLuma = dot(display, kLuma);
++
++        if (displayLuma > 0.75)
++        {
++            float rolled = 0.75 + 0.25 * (1.0 - exp(-(displayLuma - 0.75) / 0.25));
++            display *= rolled / displayLuma;
++        }
++
++        gTarget[id.xy] = float4(LinearToSrgb(display), source.a);
++        return;
++    }
++
++    // Sampled rather than loaded: when the model ran at a reduced resolution these are smaller than the
++    // frame, and its edit is enlarged here while the frame underneath stays untouched.
++    float4 proxySample = gSource.SampleLevel(gLinear, uv, 0);
++    float4 modelSample = gModel.SampleLevel(gLinear, uv, 0);
++
++    // Nothing was encoded on the way in, so nothing is decoded here either.
++    float3 proxy = gPassthrough != 0 ? proxySample.rgb : SrgbToLinear(proxySample.rgb);
++    float3 model = gPassthrough != 0 ? modelSample.rgb : SrgbToLinear(modelSample.rgb);
++    float4 originalSample = gOriginal.Load(int3(id.xy, 0));
++
++    // All three pictures have to share a scale before their luminances can be compared. The proxy and
++    // the model come back from an sRGB decode, so they sit in 0..1 where 1 is the white point; the
++    // frame is raw linear and runs well past that. Comparing them unnormalised is a real bug and it
++    // reads exactly like the model has stopped adding detail: with the frame several times larger,
++    // the shadow branch never fires, every pixel takes the highlight branch, and the clamp flattens
++    // the result to a near-constant scale. Colour still moves, because that comes from the model's
++    // own hue, which is what makes the failure so confusing to look at.
++    const float normScale = gPassthrough != 0 ? 1.0 : max(gWhitePoint, 1e-4);
++    float3 original = originalSample.rgb / normScale;
++
++    float originalLuma = dot(original, kLuma);
++    float proxyLuma = dot(proxy, kLuma);
++
++    if (gDebugView == 1)
++    {
++        gTarget[id.xy] = float4(proxy * gWhitePoint, originalSample.a);
++        return;
++    }
++
++    if (gDebugView == 2)
++    {
++        gTarget[id.xy] = float4(model * gWhitePoint, originalSample.a);
++        return;
++    }
++
++    float3 edit = model - proxy;
++
++    // Coring was tried here and removed: the per-frame churn's amplitude overlaps the real detail's,
++    // so an amplitude threshold cannot separate them -- it only relocated the noise to the threshold.
++
++    if (gDebugView == 3)
++    {
++        // Amplified and centred on grey, so both directions of the edit are visible at once.
++        float3 shown = saturate(0.5 + edit * 20.0);
++        gTarget[id.xy] = float4(SrgbToLinear(shown) * gWhitePoint, originalSample.a);
++        return;
++    }
++
++    // The edit, averaged over time. The model re-decides a measurable fraction of its answer every
++    // frame even on a static scene; blending each frame's edit with its own reprojected history keeps
++    // the consistent part -- the detail -- and cancels the part that re-randomises. NVIDIA's own
++    // motion vectors carry the history to where the surface is now.
++)" R"(
++    // The composition. The model's answer is not treated as a difference to add onto the frame -- it
++    // is a complete picture in its own right, and it is brought back by rescaling it to sit where the
++    // original's luminance says it should. Adding a difference is what let colour run away: nothing
++    // bounded where the sum landed, so a warm subject could arrive green. Here both ends of every
++    // blend are well-formed pictures, so everything between them is one too.
++    float modelLuma = dot(model, kLuma);
++    float3 upgraded;
++
++    if (modelLuma <= 1e-5)
++    {
++        // The model can return an empty frame for an input it cannot read. Rescaling that collapses
++        // the picture to black, so the frame is handed back untouched instead.
++        upgraded = original;
++    }
++    else
++    {
++        float ratio;
++
++        if (originalLuma < proxyLuma)
++        {
++            // Below what the proxy showed: the frame's own luminance is the target.
++            ratio = originalLuma / max(proxyLuma, 1e-6);
++        }
++        else
++        {
++            // Above it, the difference is headroom the proxy could not represent -- brightness the
++            // frame really has and the model never saw. It is handed back on top of the model's own
++            // answer rather than scaled away, which is what kept highlights from being muted.
++            ratio = (modelLuma + max(0.0, originalLuma - proxyLuma)) / modelLuma;
++        }
++
++        upgraded = lerp(original, HueOkLab(model * ratio, model), gTransferStrength);
++    }
++
++    // Detail strength decides how much of the model's picture is reached at all; colour strength
++    // decides whether its colour comes with it. At 0 the frame keeps the game's own hue exactly and
++    // only its light carries the model's verdict; at 1 the model's colour arrives as well.
++    float upgradedLuma = dot(upgraded, kLuma);
++    float lumaRatio = originalLuma > 1e-6 ? clamp(upgradedLuma / originalLuma, 0.0, gMaxRatio) : 1.0;
++    float3 result = lerp(original * lumaRatio, upgraded, gColourStrength);
++
++    // Back out of the normalised space the composition worked in.
++    result *= normScale;
++
++    gTarget[id.xy] = float4(max(result, float3(0.0, 0.0, 0.0)), originalSample.a);
++}
++)";
++
++struct Params
++{
++    unsigned int mode;
++    float whitePoint;
++    unsigned int width;
++    unsigned int height;
++    float transferStrength;
++    float colourStrength;
++    unsigned int debugView;
++    float maxRatio;
++    // Set when the game's own buffer is already tone-mapped, in which case there is nothing to convert.
++    unsigned int passthrough;
++    // 0 off, 1 blend with the reprojected history, 2 restart the history.
++    float mvScaleX;
++    float mvScaleY;
++    unsigned int guideWidth;
++    unsigned int guideHeight;
++
++};
++
++static_assert(sizeof(Params) % 4 == 0, "root constants are dwords");
++static_assert(sizeof(Params) / 4 <= 60, "root constants must leave room for the descriptor table");
++
++// A typeless resource cannot be viewed, and the buffer the upscaler writes is occasionally declared that
++// way, so the typed member of the same family is substituted.
++inline DXGI_FORMAT TypedFormat(DXGI_FORMAT f)
++{
++    switch (f)
++    {
++    case DXGI_FORMAT_R16G16B16A16_TYPELESS:
++        return DXGI_FORMAT_R16G16B16A16_FLOAT;
++    case DXGI_FORMAT_R32G32B32A32_TYPELESS:
++        return DXGI_FORMAT_R32G32B32A32_FLOAT;
++    case DXGI_FORMAT_R10G10B10A2_TYPELESS:
++        return DXGI_FORMAT_R10G10B10A2_UNORM;
++    case DXGI_FORMAT_R8G8B8A8_TYPELESS:
++    case DXGI_FORMAT_R8G8B8A8_UNORM_SRGB:
++        // The sRGB view cannot be bound as a typed UAV, and the shader does its own transfer function.
++        return DXGI_FORMAT_R8G8B8A8_UNORM;
++    case DXGI_FORMAT_B8G8R8A8_TYPELESS:
++    case DXGI_FORMAT_B8G8R8A8_UNORM_SRGB:
++        return DXGI_FORMAT_B8G8R8A8_UNORM;
++    default:
++        return f;
++    }
++}
++
++// Owns the compute pipeline and the descriptors both passes need. The dispatches are recorded onto the
++// caller's command list, so there is no queue or fence to manage here.
++class Codec
++{
++  public:
++    bool ensure(ID3D12Device* device)
++    {
++        if (pipeline_ != nullptr)
++            return true;
++
++        ID3DBlob* code = nullptr;
++        ID3DBlob* errors = nullptr;
++
++        if (FAILED(D3DCompile(kShaderSource, strlen(kShaderSource), nullptr, nullptr, nullptr, "main",
++                              "cs_5_1", 0, 0, &code, &errors)))
++        {
++            if (errors != nullptr)
++                errors->Release();
++
++            return false;
++        }
++
++        if (errors != nullptr)
++            errors->Release();
++
++        D3D12_DESCRIPTOR_RANGE ranges[2] = {};
++        ranges[0].RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
++        ranges[0].NumDescriptors = 5; // proxy, model, original, motion, previous edit
++        ranges[1].RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_UAV;
++        ranges[1].NumDescriptors = 2; // result, kept copy
++        ranges[1].OffsetInDescriptorsFromTableStart = 5;
++
++        D3D12_ROOT_PARAMETER params[2] = {};
++        params[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
++        params[0].DescriptorTable.NumDescriptorRanges = 2;
++        params[0].DescriptorTable.pDescriptorRanges = ranges;
++        params[1].ParameterType = D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS;
++        params[1].Constants.Num32BitValues = sizeof(Params) / 4;
++
++        D3D12_STATIC_SAMPLER_DESC sampler = {};
++        sampler.Filter = D3D12_FILTER_MIN_MAG_MIP_LINEAR;
++        sampler.AddressU = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
++        sampler.AddressV = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
++        sampler.AddressW = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
++        sampler.MaxLOD = D3D12_FLOAT32_MAX;
++        sampler.ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
++
++        D3D12_ROOT_SIGNATURE_DESC rootDesc = {};
++        rootDesc.NumParameters = 2;
++        rootDesc.pParameters = params;
++        rootDesc.NumStaticSamplers = 1;
++        rootDesc.pStaticSamplers = &sampler;
++
++        ID3DBlob* serialized = nullptr;
++
++        if (FAILED(D3D12SerializeRootSignature(&rootDesc, D3D_ROOT_SIGNATURE_VERSION_1, &serialized, nullptr)))
++        {
++            code->Release();
++            return false;
++        }
++
++        HRESULT hr = device->CreateRootSignature(0, serialized->GetBufferPointer(), serialized->GetBufferSize(),
++                                                 IID_PPV_ARGS(&root_));
++        serialized->Release();
++
++        if (FAILED(hr))
++        {
++            code->Release();
++            return false;
++        }
++
++        D3D12_COMPUTE_PIPELINE_STATE_DESC pso = {};
++        pso.pRootSignature = root_;
++        pso.CS.pShaderBytecode = code->GetBufferPointer();
++        pso.CS.BytecodeLength = code->GetBufferSize();
++        hr = device->CreateComputePipelineState(&pso, IID_PPV_ARGS(&pipeline_));
++        code->Release();
++
++        if (FAILED(hr))
++            return false;
++
++        // Five descriptors per dispatch, two dispatches a frame; a ring of eight keeps a frame's
++        // descriptors from being overwritten while it is still in flight.
++        D3D12_DESCRIPTOR_HEAP_DESC heapDesc = {};
++        heapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
++        heapDesc.NumDescriptors = kRingSlots * kPerDispatch;
++        heapDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
++
++        if (FAILED(device->CreateDescriptorHeap(&heapDesc, IID_PPV_ARGS(&heap_))))
++            return false;
++
++        stride_ = device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
++        device_ = device;
++        return true;
++    }
++
++    // Every texture must already be in the state its slot needs: sources shader-readable, targets
++    // writable. Slots a pass does not read still have to be populated, or the descriptor is undefined.
++    void dispatch(ID3D12GraphicsCommandList* cmd, const Params& constants, ID3D12Resource* source,
++                  ID3D12Resource* model, ID3D12Resource* original, ID3D12Resource* target,
++                  ID3D12Resource* keep, ID3D12Resource* motion = nullptr,
++                  ID3D12Resource* prevEdit = nullptr)
++    {
++        if (pipeline_ == nullptr)
++            return;
++
++        const unsigned int slot = ring_;
++        ring_ = (ring_ + 1) % kRingSlots;
++
++        D3D12_CPU_DESCRIPTOR_HANDLE cpu = heap_->GetCPUDescriptorHandleForHeapStart();
++        cpu.ptr += (SIZE_T) slot * kPerDispatch * stride_;
++        D3D12_GPU_DESCRIPTOR_HANDLE gpu = heap_->GetGPUDescriptorHandleForHeapStart();
++        gpu.ptr += (UINT64) slot * kPerDispatch * stride_;
++
++        ID3D12Resource* srvs[5] = { source, model != nullptr ? model : source,
++                                    original != nullptr ? original : source,
++                                    motion != nullptr ? motion : source,
++                                    prevEdit != nullptr ? prevEdit : source };
++
++        for (int i = 0; i < 5; ++i)
++        {
++            D3D12_SHADER_RESOURCE_VIEW_DESC srv = {};
++            srv.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
++            srv.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
++            srv.Texture2D.MipLevels = 1;
++            srv.Format = TypedFormat(srvs[i]->GetDesc().Format);
++
++            D3D12_CPU_DESCRIPTOR_HANDLE handle = cpu;
++            handle.ptr += (SIZE_T) i * stride_;
++            device_->CreateShaderResourceView(srvs[i], &srv, handle);
++        }
++
++        ID3D12Resource* uavs[2] = { target, keep != nullptr ? keep : target };
++
++        for (int i = 0; i < 2; ++i)
++        {
++            D3D12_UNORDERED_ACCESS_VIEW_DESC uav = {};
++            uav.ViewDimension = D3D12_UAV_DIMENSION_TEXTURE2D;
++            uav.Format = TypedFormat(uavs[i]->GetDesc().Format);
++
++            D3D12_CPU_DESCRIPTOR_HANDLE handle = cpu;
++            handle.ptr += (SIZE_T) (5 + i) * stride_;
++            device_->CreateUnorderedAccessView(uavs[i], nullptr, &uav, handle);
++        }
++
++        ID3D12DescriptorHeap* heaps[] = { heap_ };
++        cmd->SetDescriptorHeaps(1, heaps);
++        cmd->SetComputeRootSignature(root_);
++        cmd->SetPipelineState(pipeline_);
++        cmd->SetComputeRootDescriptorTable(0, gpu);
++        cmd->SetComputeRoot32BitConstants(1, sizeof(Params) / 4, &constants, 0);
++        cmd->Dispatch((constants.width + 7) / 8, (constants.height + 7) / 8, 1);
++    }
++
++    void destroy()
++    {
++        if (pipeline_ != nullptr)
++        {
++            pipeline_->Release();
++            pipeline_ = nullptr;
++        }
++
++        if (root_ != nullptr)
++        {
++            root_->Release();
++            root_ = nullptr;
++        }
++
++        if (heap_ != nullptr)
++        {
++            heap_->Release();
++            heap_ = nullptr;
++        }
++
++        device_ = nullptr;
++    }
++
++  private:
++    static const unsigned int kRingSlots = 8;
++    static const unsigned int kPerDispatch = 7;
++
++    ID3D12Device* device_ = nullptr;
++    ID3D12RootSignature* root_ = nullptr;
++    ID3D12PipelineState* pipeline_ = nullptr;
++    ID3D12DescriptorHeap* heap_ = nullptr;
++    unsigned int stride_ = 0;
++    unsigned int ring_ = 0;
++};
++} // namespace codec
+diff --git a/OptiScaler/hooks/D3D11_Hooks.cpp b/OptiScaler/hooks/D3D11_Hooks.cpp
+index e32dd420..fff80c81 100644
+--- a/OptiScaler/hooks/D3D11_Hooks.cpp
++++ b/OptiScaler/hooks/D3D11_Hooks.cpp
+@@ -91,6 +91,12 @@ static void HookToDeviceLocal(ID3D11Device* InDevice)
+     if (o_CreateSamplerState != nullptr || InDevice == nullptr)
+         return;
+
++    if (Config::Instance()->SkipD3D11DeviceVTableHooks.value_or_default())
++    {
++        LOG_INFO("Skipping ID3D11Device vtable hooks by compatibility setting");
++        return;
++    }
++
+     LOG_DEBUG("Dx11");
+
+     // Get the vtable pointer
+diff --git a/OptiScaler/hooks/LibraryLoad_Hooks.cpp b/OptiScaler/hooks/LibraryLoad_Hooks.cpp
+index 5a5ebf83..a0709b0e 100644
+--- a/OptiScaler/hooks/LibraryLoad_Hooks.cpp
++++ b/OptiScaler/hooks/LibraryLoad_Hooks.cpp
+@@ -54,6 +54,14 @@ HMODULE LibraryLoadHooks::LoadLibraryCheckW(std::wstring libName, LPCWSTR lpLibF
+     auto path = std::filesystem::path(libName).lexically_normal();
+     auto normalizedPath = path.wstring();
+     to_lower_in_place(normalizedPath);
++    auto normalizedFileName = path.filename().wstring();
++    to_lower_in_place(normalizedFileName);
++
++    // The pre-NR add-on ships a private bridge named nrchain_nvngx.dll.
++    // The generic NGX test below intentionally uses suffix matching, which
++    // otherwise mistakes that bridge for _nvngx.dll and returns OptiScaler's
++    // own module. Let Windows load the exact private bridge instead.
++    const bool isNrChainPrivateBridge = normalizedFileName == L"nrchain_nvngx.dll";
+
+     std::filesystem::path localSlPath(Config::Instance()->MainDllPath.value());
+     localSlPath = localSlPath / L"streamline"; // Hardcoded streamline folder
+@@ -69,7 +77,8 @@ HMODULE LibraryLoadHooks::LoadLibraryCheckW(std::wstring libName, LPCWSTR lpLibF
+
+     auto pos = libName.rfind(exePath);
+
+-    if (Config::Instance()->EnableDlssInputs.value_or_default() && CheckDllNameW(&libName, &nvngxNamesW) &&
++    if (!isNrChainPrivateBridge && Config::Instance()->EnableDlssInputs.value_or_default() &&
++        CheckDllNameW(&libName, &nvngxNamesW) &&
+         (!Config::Instance()->HookOriginalNvngxOnly.value_or_default() || pos == std::string::npos))
+     {
+         LOG_INFO("nvngx call: {0}, returning this dll!", libNameA);
+diff --git a/OptiScaler/inputs/NVNGX_DLSS_Dx11.cpp b/OptiScaler/inputs/NVNGX_DLSS_Dx11.cpp
+index cd0dca4d..0370b096 100644
+--- a/OptiScaler/inputs/NVNGX_DLSS_Dx11.cpp
++++ b/OptiScaler/inputs/NVNGX_DLSS_Dx11.cpp
+@@ -13,6 +13,8 @@
+ #include <with_dx12/with_dx12.h>
+ #include "FG/Upscaler_Inputs_Dx11wDx12.h"
+
++#include <d3d11_4.h>
++
+ #include <ankerl/unordered_dense.h>
+ #include <imgui/ImGuiNotify.hpp>
+ #include <misc/IdentifyGpu.h>
+@@ -24,6 +26,126 @@ static bool shutdown = false;
+ static bool _skipInit = false;
+ static wchar_t const** paths;
+
++// Marker exposed by the bundled GIMI device wrapper. Native NGX requires the
++// device and context to be the original pair, not the wrapper identity.
++static constexpr GUID kGimiHackerDevice = {0x83ffd841,
++                                           0xa5c9,
++                                           0x46f4,
++                                           {0x81, 0x09, 0xbc, 0x25, 0x95, 0x58, 0xfe, 0xf4}};
++
++// Private ABI exported by the customized GIMI HackerContext. QueryInterface
++// returns the ID3D11DeviceContext1 trampoline that calls the saved system
++// D3D11 entry points without re-entering GIMI's process-wide context hooks.
++static constexpr GUID kGimiPassThroughContext = {0x91acfd68,
++                                                 0x5a6f,
++                                                 0x45ea,
++                                                 {0xb8, 0xd0, 0x71, 0xac, 0xc3, 0x21, 0x51, 0xb7}};
++
++static bool IsGimiDevice(ID3D11Device* device)
++{
++    if (device == nullptr)
++        return false;
++
++    IUnknown* marker = nullptr;
++    const auto result = device->QueryInterface(kGimiHackerDevice, reinterpret_cast<void**>(&marker));
++    if (SUCCEEDED(result) && marker != nullptr)
++    {
++        marker->Release();
++        return true;
++    }
++
++    return false;
++}
++
++struct NativeD3D11Context
++{
++    ID3D11DeviceContext1* context1 = nullptr;
++    ID3D11Device* device = nullptr;
++
++    NativeD3D11Context() = default;
++    NativeD3D11Context(const NativeD3D11Context&) = delete;
++    NativeD3D11Context& operator=(const NativeD3D11Context&) = delete;
++
++    NativeD3D11Context(NativeD3D11Context&& other) noexcept
++        : context1(other.context1), device(other.device)
++    {
++        other.context1 = nullptr;
++        other.device = nullptr;
++    }
++
++    NativeD3D11Context& operator=(NativeD3D11Context&& other) noexcept
++    {
++        if (this != &other)
++        {
++            Reset();
++            context1 = other.context1;
++            device = other.device;
++            other.context1 = nullptr;
++            other.device = nullptr;
++        }
++        return *this;
++    }
++
++    ~NativeD3D11Context() { Reset(); }
++
++    void Reset()
++    {
++        if (device != nullptr)
++        {
++            device->Release();
++            device = nullptr;
++        }
++        if (context1 != nullptr)
++        {
++            context1->Release();
++            context1 = nullptr;
++        }
++    }
++
++    ID3D11DeviceContext* Context() const { return context1; }
++};
++
++static NativeD3D11Context GetNativeD3D11Context(ID3D11DeviceContext* context)
++{
++    NativeD3D11Context native;
++    if (context == nullptr)
++        return native;
++
++    if (SUCCEEDED(context->QueryInterface(kGimiPassThroughContext,
++                                         reinterpret_cast<void**>(&native.context1))) &&
++        native.context1 != nullptr)
++    {
++        native.context1->GetDevice(&native.device);
++        if (native.device != nullptr)
++        {
++            static ID3D11DeviceContext* lastWrapper = nullptr;
++            static ID3D11DeviceContext1* lastTrampoline = nullptr;
++            static ID3D11Device* lastDevice = nullptr;
++            if (context != lastWrapper || native.context1 != lastTrampoline || native.device != lastDevice)
++            {
++                LOG_INFO("GIMI pass-through context resolved: supplied={:p}, trampoline={:p}, device={:p}",
++                         static_cast<void*>(context), static_cast<void*>(native.context1),
++                         static_cast<void*>(native.device));
++                lastWrapper = context;
++                lastTrampoline = native.context1;
++                lastDevice = native.device;
++            }
++        }
++        return native;
++    }
++
++    // Non-GIMI callers still need a same-device context. Context1 is widely
++    // available and does not change pointer identity on a native D3D11 device.
++    if (SUCCEEDED(context->QueryInterface(IID_PPV_ARGS(&native.context1))) && native.context1 != nullptr)
++    {
++        native.context1->GetDevice(&native.device);
++        return native;
++    }
++
++    LOG_DEBUG("Native ID3D11DeviceContext1 unavailable; keeping supplied context");
++    return native;
++}
++
+ class ScopedInitDx11
+ {
+   private:
+@@ -303,13 +425,61 @@ NVSDK_NGX_API NVSDK_NGX_Result NVSDK_NGX_D3D11_Init_with_ProjectID(
+     const wchar_t* InApplicationDataPath, ID3D11Device* InDevice, const NVSDK_NGX_FeatureCommonInfo* InFeatureInfo,
+     NVSDK_NGX_Version InSDKVersion)
+ {
+-    auto result = NVSDK_NGX_D3D11_Init_Ext(0x1337, InApplicationDataPath, InDevice, InSDKVersion, InFeatureInfo);
++    NVSDK_NGX_FeatureCommonInfo localFeatureInfo = {};
+
+-    LOG_INFO("InProjectId: {0}", InProjectId);
++    if (InFeatureInfo != nullptr)
++        std::memcpy(&localFeatureInfo, InFeatureInfo, sizeof(NVSDK_NGX_FeatureCommonInfo));
++
++    if (!_skipInit)
++        UpdateInitPaths(&localFeatureInfo);
++
++    const char* projectId = InProjectId;
++    if (Config::Instance()->UseGenericAppIdWithDlss.value_or_default())
++        projectId = project_id_override;
++
++    if (Config::Instance()->DLSSEnabled.value_or_default() && !_skipInit)
++    {
++        if (NVNGXProxy::NVNGXModule() == nullptr)
++            NVNGXProxy::InitNVNGX();
++
++        // D3D11 callers that deliberately selected a D3D12-side upscaler must keep their
++        // capability/evaluate parameter table owned by OptiScaler. Native D3D11 NGX returns a
++        // type-strict parameter object: it cannot carry the D3D12 resources produced by the
++        // interop bridge in the form expected by both an NGX observer and native D3D12 DLSS.
++        // Deferring native D3D11 initialisation makes GetCapabilityParameters return OptiScaler's
++        // cross-pointer-compatible table. The D3D12 feature initialises native NGX on its own.
++        // GIMI additionally needs this because its wrapper and native context are not an NGX-valid pair.
++        const bool usesD3D12Bridge =
++            Config::Instance()->Dx11Upscaler.value_or_default() == Upscaler::DLSS_on12;
++        const bool deferNativeInit = IsGimiDevice(InDevice) || usesD3D12Bridge;
++
++        if (deferNativeInit)
++        {
++            LOG_INFO("D3D12-side DLSS/GIMI path detected; deferring native D3D11 NGX init until CreateFeature");
++        }
++        else if (NVNGXProxy::NVNGXModule() != nullptr && NVNGXProxy::D3D11_Init_ProjectID() != nullptr)
++        {
++            const auto nativeResult = NVNGXProxy::D3D11_Init_ProjectID()(
++                projectId, InEngineType, InEngineVersion, InApplicationDataPath, InDevice, InSDKVersion,
++                &localFeatureInfo);
++            LOG_INFO("calling NVNGXProxy::D3D11_Init_ProjectID from with_ProjectID result: {0:X}",
++                     (UINT) nativeResult);
++
++            if (nativeResult == NVSDK_NGX_Result_Success ||
++                nativeResult == NVSDK_NGX_Result_FAIL_FeatureAlreadyExists)
++                NVNGXProxy::SetDx11Inited(true);
++        }
++    }
++
++    ScopedInitDx11 scopedInit {};
++    auto result = NVSDK_NGX_D3D11_Init_Ext(0x1337, InApplicationDataPath, InDevice, InSDKVersion,
++                                           &localFeatureInfo);
++
++    LOG_INFO("InProjectId: {0}", projectId);
+     LOG_INFO("InEngineType: {0}", (int) InEngineType);
+     LOG_INFO("InEngineVersion: {0}", InEngineVersion);
+
+-    State::Instance().NVNGX_ProjectId = std::string(InProjectId);
++    State::Instance().NVNGX_ProjectId = std::string(projectId);
+     State::Instance().NVNGX_Engine = InEngineType;
+     State::Instance().NVNGX_EngineVersion = std::string(InEngineVersion);
+
+@@ -520,19 +690,43 @@ NVSDK_NGX_API NVSDK_NGX_Result NVSDK_NGX_D3D11_CreateFeature(ID3D11DeviceContext
+                                                              NVSDK_NGX_Parameter* InParameters,
+                                                              NVSDK_NGX_Handle** OutHandle)
+ {
++    NativeD3D11Context nativeContext = GetNativeD3D11Context(InDevCtx);
++    ID3D11DeviceContext* featureContext = nativeContext.Context() != nullptr ? nativeContext.Context() : InDevCtx;
++    bool featureDeviceRefFromGetDevice = false;
++
++    if (nativeContext.device != nullptr)
++    {
++        D3D11Device = nativeContext.device;
++    }
++    else if (D3D11Device == nullptr && featureContext != nullptr)
++    {
++        featureContext->GetDevice(&D3D11Device);
++        featureDeviceRefFromGetDevice = D3D11Device != nullptr;
++    }
++
++    if (featureContext == nullptr || D3D11Device == nullptr)
++    {
++        LOG_ERROR("Can't resolve a D3D11 device/context for CreateFeature");
++        return NVSDK_NGX_Result_FAIL_InvalidParameter;
++    }
++
+     // FeatureId check
+     if (InFeatureID != NVSDK_NGX_Feature_SuperSampling && InFeatureID != NVSDK_NGX_Feature_RayReconstruction)
+     {
+         if (Config::Instance()->DLSSEnabled.value_or_default() && NVNGXProxy::InitDx11(D3D11Device) &&
+             NVNGXProxy::D3D11_CreateFeature() != nullptr)
+         {
+-            auto result = NVNGXProxy::D3D11_CreateFeature()(InDevCtx, InFeatureID, InParameters, OutHandle);
++            auto result = NVNGXProxy::D3D11_CreateFeature()(featureContext, InFeatureID, InParameters, OutHandle);
+             LOG_INFO("D3D11_CreateFeature result for ({0}): {1:X}", (int) InFeatureID, (UINT) result);
++            if (featureDeviceRefFromGetDevice)
++                D3D11Device->Release();
+             return result;
+         }
+         else
+         {
+             LOG_ERROR("Can't create this feature ({0})!", (int) InFeatureID);
++            if (featureDeviceRefFromGetDevice)
++                D3D11Device->Release();
+             return NVSDK_NGX_Result_Fail;
+         }
+     }
+@@ -579,9 +773,7 @@ NVSDK_NGX_API NVSDK_NGX_Result NVSDK_NGX_D3D11_CreateFeature(ID3D11DeviceContext
+     auto deviceContext = Dx11Contexts[handleId].feature.get();
+     *OutHandle = deviceContext->Handle();
+
+-    // Always get device from context to avoid issues with Dx11 w/Dx12
+-    LOG_DEBUG("Get Dx11Device from InDevCtx!");
+-    InDevCtx->GetDevice(&D3D11Device);
++    LOG_DEBUG("Using resolved native D3D11 device/context for CreateFeature");
+     evalCounter = 0;
+
+     if (!D3D11Device)
+@@ -590,13 +782,13 @@ NVSDK_NGX_API NVSDK_NGX_Result NVSDK_NGX_D3D11_CreateFeature(ID3D11DeviceContext
+         return NVSDK_NGX_Result_Fail;
+     }
+
+-    D3D11Device->Release();
+-
+     State::Instance().autoExposure.reset();
+
+-    if (deviceContext->ModuleLoaded() && deviceContext->Init(D3D11Device, InDevCtx, InParameters))
++    if (deviceContext->ModuleLoaded() && deviceContext->Init(D3D11Device, featureContext, InParameters))
+     {
+         State::Instance().currentFeature = deviceContext;
++        if (featureDeviceRefFromGetDevice)
++            D3D11Device->Release();
+         return NVSDK_NGX_Result_Success;
+     }
+
+@@ -605,6 +797,9 @@ NVSDK_NGX_API NVSDK_NGX_Result NVSDK_NGX_D3D11_CreateFeature(ID3D11DeviceContext
+     State::Instance().newBackend = Upscaler::FSR22;
+     State::Instance().changeBackend[handleId] = true;
+
++    if (featureDeviceRefFromGetDevice)
++        D3D11Device->Release();
++
+     return NVSDK_NGX_Result_Success;
+ }
+
+@@ -716,6 +911,11 @@ NVSDK_NGX_API NVSDK_NGX_Result NVSDK_NGX_D3D11_EvaluateFeature(ID3D11DeviceConte
+         return NVSDK_NGX_Result_Fail;
+     }
+
++    NativeD3D11Context nativeContext = GetNativeD3D11Context(InDevCtx);
++    ID3D11DeviceContext* featureContext = nativeContext.Context() != nullptr ? nativeContext.Context() : InDevCtx;
++    if (nativeContext.device != nullptr)
++        D3D11Device = nativeContext.device;
++
+     State& state = State::Instance();
+     auto handleId = InFeatureHandle->Id;
+     if (handleId < DLSS_MOD_ID_OFFSET)
+@@ -723,7 +923,8 @@ NVSDK_NGX_API NVSDK_NGX_Result NVSDK_NGX_D3D11_EvaluateFeature(ID3D11DeviceConte
+         if (Config::Instance()->DLSSEnabled.value_or_default() && NVNGXProxy::D3D11_EvaluateFeature() != nullptr)
+         {
+             LOG_DEBUG("D3D11_EvaluateFeature for ({0})", handleId);
+-            auto result = NVNGXProxy::D3D11_EvaluateFeature()(InDevCtx, InFeatureHandle, InParameters, InCallback);
++            auto result =
++                NVNGXProxy::D3D11_EvaluateFeature()(featureContext, InFeatureHandle, InParameters, InCallback);
+             LOG_INFO("D3D11_EvaluateFeature result for ({0}): {1:X}", handleId, (UINT) result);
+             return result;
+         }
+@@ -745,7 +946,7 @@ NVSDK_NGX_API NVSDK_NGX_Result NVSDK_NGX_D3D11_EvaluateFeature(ID3D11DeviceConte
+
+     if (state.changeBackend[handleId])
+     {
+-        auto successfulPhase = FeatureProvider_Dx11::ChangeFeature(state.newBackend, D3D11Device, InDevCtx, handleId,
++        auto successfulPhase = FeatureProvider_Dx11::ChangeFeature(state.newBackend, D3D11Device, featureContext, handleId,
+                                                                    InParameters, activeContext);
+
+         evalCounter = 0;
+@@ -780,7 +981,7 @@ NVSDK_NGX_API NVSDK_NGX_Result NVSDK_NGX_D3D11_EvaluateFeature(ID3D11DeviceConte
+         return NVSDK_NGX_Result_Success;
+     }
+
+-    auto upscaleResult = deviceContext->Evaluate(InDevCtx, InParameters);
++    auto upscaleResult = deviceContext->Evaluate(featureContext, InParameters);
+
+     if (State::Instance().activeFgInput == FGInput::Upscaler)
+     {
+@@ -789,7 +990,7 @@ NVSDK_NGX_API NVSDK_NGX_Result NVSDK_NGX_D3D11_EvaluateFeature(ID3D11DeviceConte
+             auto cq = WithDx12::GetD3D12CommandQueue();
+             auto device = WithDx12::GetD3D12Device();
+
+-            UpscalerInputsDx11wDx12::Init(D3D11Device, InDevCtx, device, cq);
++            UpscalerInputsDx11wDx12::Init(D3D11Device, featureContext, device, cq);
+
+             UpscalerInputsDx11wDx12::UpscaleStart(InParameters, deviceContext);
+             UpscalerInputsDx11wDx12::UpscaleEnd(InParameters, deviceContext);
+@@ -799,6 +1000,7 @@ NVSDK_NGX_API NVSDK_NGX_Result NVSDK_NGX_D3D11_EvaluateFeature(ID3D11DeviceConte
+     auto upscaler = deviceContext->GetUpscalerType();
+     if (!upscaleResult && !deviceContext->IsInited() &&
+         (upscaler == Upscaler::XeSS || upscaler == Upscaler::XeSS_on12 || upscaler == Upscaler::DLSS ||
++         upscaler == Upscaler::DLSS_on12 ||
+          upscaler == Upscaler::FFX_on12))
+     {
+         ImGui::InsertNotification({ ImGuiToastType::Error, 10000, "Upscaler failed to run!" });
+diff --git a/OptiScaler/upscalers/IFeature_Dx11wDx12.cpp b/OptiScaler/upscalers/IFeature_Dx11wDx12.cpp
+index 7f247657..0c6af4dd 100644
+--- a/OptiScaler/upscalers/IFeature_Dx11wDx12.cpp
++++ b/OptiScaler/upscalers/IFeature_Dx11wDx12.cpp
+@@ -444,7 +444,46 @@ bool IFeature_Dx11wDx12::Evaluate(ID3D11DeviceContext* InDeviceContext, NVSDK_NG
+
+         commandListRecording = true;
+
+-        InParameters->Set(NVSDK_NGX_Parameter_Color, (void*) dx11Color.Dx12Resource);
++        ID3D12Resource* carrierColor = dx11Color.Dx12Resource;
++        const auto carrierColorDesc = carrierColor->GetDesc();
++
++        if (carrierColorDesc.Format == DXGI_FORMAT_R10G10B10A2_UNORM)
++        {
++            if (PreNrColorTransfer == nullptr)
++            {
++                PreNrColorTransfer = std::make_unique<FT_Dx12>("Genshin pre-NR FP16 color transfer",
++                                                               _dx11on12Device,
++                                                               DXGI_FORMAT_R16G16B16A16_FLOAT);
++            }
++
++            if (!PreNrColorTransfer->IsInit() ||
++                !PreNrColorTransfer->CreateBufferResource(_dx11on12Device, carrierColor,
++                                                           D3D12_RESOURCE_STATE_UNORDERED_ACCESS))
++            {
++                LOG_ERROR("Pre-NR FP16 color resource creation failed");
++                break;
++            }
++
++            PreNrColorTransfer->SetBufferState(cmdList, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
++
++            if (!PreNrColorTransfer->Dispatch(cmdList, carrierColor, PreNrColorTransfer->Buffer()))
++            {
++                LOG_ERROR("Pre-NR R10-to-FP16 color transfer failed");
++                break;
++            }
++
++            PreNrColorTransfer->SetBufferState(cmdList, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
++            carrierColor = PreNrColorTransfer->Buffer();
++
++            static bool reportedPreNrColorTransfer = false;
++            if (!reportedPreNrColorTransfer)
++            {
++                reportedPreNrColorTransfer = true;
++                LOG_INFO("Pre-NR carrier color promoted from R10G10B10A2_UNORM to R16G16B16A16_FLOAT");
++            }
++        }
++
++        InParameters->Set(NVSDK_NGX_Parameter_Color, (void*) carrierColor);
+         InParameters->Set(NVSDK_NGX_Parameter_MotionVectors, (void*) dx11Mv.Dx12Resource);
+         InParameters->Set(NVSDK_NGX_Parameter_Output, (void*) dx11Out.Dx12Resource);
+         InParameters->Set(NVSDK_NGX_Parameter_Depth, (void*) dx11Depth.Dx12Resource);
+diff --git a/OptiScaler/upscalers/IFeature_Dx11wDx12.h b/OptiScaler/upscalers/IFeature_Dx11wDx12.h
+index 61f8b19a..cb08bd72 100644
+--- a/OptiScaler/upscalers/IFeature_Dx11wDx12.h
++++ b/OptiScaler/upscalers/IFeature_Dx11wDx12.h
+@@ -4,6 +4,7 @@
+ #include "IFeature_Dx12.h"
+
+ #include <with_dx12/dx11_with_dx12.h>
++#include <shaders/format_transfer/FT_Dx12.h>
+
+ #include <d3d12.h>
+ #include <d3d11_4.h>
+@@ -38,6 +39,10 @@ class IFeature_Dx11wDx12 : public virtual IFeature_Dx11
+     UINT64 Dx12FenceValue = 0;
+     UINT64 Dx12CommandAllocatorFenceValue[DX11WDX12_NUM_OF_BUFFERS] = {};
+
++    // Genshin's shared HDR color is R10G10B10A2. DLSS5 pre-NR accepts FP16
++    // or R11G11B10, so this pass promotes color before the NGX carrier call.
++    std::unique_ptr<FT_Dx12> PreNrColorTransfer = nullptr;
++
+     Dx11WithDx12::D3D11_TEXTURE2D_RESOURCE_C dx11Color = {};
+     Dx11WithDx12::D3D11_TEXTURE2D_RESOURCE_C dx11Mv = {};
+     Dx11WithDx12::D3D11_TEXTURE2D_RESOURCE_C dx11Depth = {};
+diff --git a/OptiScaler/with_dx12/dx11_with_dx12.cpp b/OptiScaler/with_dx12/dx11_with_dx12.cpp
+index 3fb1a705..f351e221 100644
+--- a/OptiScaler/with_dx12/dx11_with_dx12.cpp
++++ b/OptiScaler/with_dx12/dx11_with_dx12.cpp
+@@ -38,6 +38,19 @@ Dx11WithDx12::D3D11_TEXTURE2D_DESC_C CaptureDesc(const D3D11_TEXTURE2D_DESC& des
+     return result;
+ }
+
++static DXGI_FORMAT ResolveSharedTextureFormat(DXGI_FORMAT sourceFormat, bool depth)
++{
++    // Genshin exposes its HDR color and output resources as
++    // R10G10B10A2_TYPELESS. A D3D12 resource cannot be sampled or used as a
++    // typed UAV through that base format, and the DLSS5 pre-NR carrier
++    // deliberately rejects it. The v1.1 bridge solved the same contract by
++    // sharing the compatible typed member of the format family.
++    if (!depth && sourceFormat == DXGI_FORMAT_R10G10B10A2_TYPELESS)
++        return DXGI_FORMAT_R10G10B10A2_UNORM;
++
++    return sourceFormat;
++}
++
+ Dx11WithDx12::D3D11_UPSCALER_RESOURCE_CACHE_C& Dx11WithDx12::GetUpscalerResourceCache()
+ {
+     return UpscalerResourceCache;
+@@ -395,6 +408,7 @@ bool Dx11WithDx12::CopyTextureFrom11To12(ID3D11Resource* InResource, D3D11_TEXTU
+     if (!sourceHasLegacyShared && !sourceHasNTShared && !InDontUseNTShared)
+     {
+         D3D11_TEXTURE2D_DESC sharedDesc = sourceDesc;
++        sharedDesc.Format = ResolveSharedTextureFormat(sourceDesc.Format, InDepth);
+         sharedDesc.MiscFlags = D3D11_RESOURCE_MISC_SHARED | D3D11_RESOURCE_MISC_SHARED_NTHANDLE;
+         sharedDesc.Usage = D3D11_USAGE_DEFAULT;
+         sharedDesc.CPUAccessFlags = 0;
+@@ -525,6 +539,7 @@ bool Dx11WithDx12::CopyTextureFrom11To12(ID3D11Resource* InResource, D3D11_TEXTU
+         else
+         {
+             D3D11_TEXTURE2D_DESC sharedDesc = sourceDesc;
++            sharedDesc.Format = ResolveSharedTextureFormat(sourceDesc.Format, InDepth);
+
+             if (sharedDesc.Format == DXGI_FORMAT_R24G8_TYPELESS)
+                 sharedDesc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+diff --git a/OptiScaler/with_dx12/with_dx12.cpp b/OptiScaler/with_dx12/with_dx12.cpp
+index 0b970b7c..eaf99e1e 100644
+--- a/OptiScaler/with_dx12/with_dx12.cpp
++++ b/OptiScaler/with_dx12/with_dx12.cpp
+@@ -5,6 +5,168 @@
+ #include <proxies/DXGI_Proxy.h>
+ #include <proxies/D3D12_Proxy.h>
+
++namespace
++{
++using PFN_D3D12CreateDevice = decltype(&D3D12CreateDevice);
++
++HRESULT SafeCreateDevice(PFN_D3D12CreateDevice fn, IUnknown* adapter, D3D_FEATURE_LEVEL featureLevel,
++                         REFIID riid, void** device, DWORD* exceptionCode)
++{
++    *exceptionCode = 0;
++    __try
++    {
++        return fn(adapter, featureLevel, riid, device);
++    }
++    __except (EXCEPTION_EXECUTE_HANDLER)
++    {
++        *exceptionCode = GetExceptionCode();
++        return E_FAIL;
++    }
++}
++
++bool ReadOnDiskBytesAtRva(HMODULE module, const BYTE* address, BYTE* out, size_t count)
++{
++    if (module == nullptr || address == nullptr || out == nullptr || count == 0)
++        return false;
++
++    wchar_t path[MAX_PATH] = {};
++    if (GetModuleFileNameW(module, path, MAX_PATH) == 0)
++        return false;
++
++    HANDLE file = CreateFileW(path, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING,
++                              FILE_ATTRIBUTE_NORMAL, nullptr);
++    if (file == INVALID_HANDLE_VALUE)
++        return false;
++
++    bool ok = false;
++    LARGE_INTEGER size = {};
++    LARGE_INTEGER at = {};
++    BYTE headers[0x1000] = {};
++    DWORD got = 0;
++
++    if (!GetFileSizeEx(file, &size) || size.QuadPart < static_cast<LONGLONG>(sizeof(IMAGE_DOS_HEADER)))
++        goto done;
++    if (!ReadFile(file, headers, sizeof(headers), &got, nullptr) || got < sizeof(IMAGE_DOS_HEADER))
++        goto done;
++
++    {
++        const auto dos = reinterpret_cast<const IMAGE_DOS_HEADER*>(headers);
++        if (dos->e_magic != IMAGE_DOS_SIGNATURE || dos->e_lfanew < 0 ||
++            static_cast<size_t>(dos->e_lfanew) + sizeof(IMAGE_NT_HEADERS64) > got)
++            goto done;
++
++        const auto nt = reinterpret_cast<const IMAGE_NT_HEADERS64*>(headers + dos->e_lfanew);
++        if (nt->Signature != IMAGE_NT_SIGNATURE || nt->OptionalHeader.Magic != IMAGE_NT_OPTIONAL_HDR64_MAGIC)
++            goto done;
++
++        const uintptr_t rva = static_cast<uintptr_t>(address - reinterpret_cast<const BYTE*>(module));
++        const auto sections = IMAGE_FIRST_SECTION(nt);
++        DWORD raw = 0;
++        for (WORD i = 0; i < nt->FileHeader.NumberOfSections; ++i)
++        {
++            const DWORD va = sections[i].VirtualAddress;
++            const DWORD span = sections[i].SizeOfRawData > sections[i].Misc.VirtualSize
++                                   ? sections[i].SizeOfRawData
++                                   : sections[i].Misc.VirtualSize;
++            if (rva >= va && rva + count <= static_cast<uintptr_t>(va) + span)
++            {
++                raw = sections[i].PointerToRawData + static_cast<DWORD>(rva - va);
++                break;
++            }
++        }
++        if (raw == 0 || static_cast<ULONGLONG>(raw) + count > static_cast<ULONGLONG>(size.QuadPart))
++            goto done;
++
++        at.QuadPart = raw;
++    }
++
++    if (!SetFilePointerEx(file, at, nullptr, FILE_BEGIN))
++        goto done;
++    got = 0;
++    ok = ReadFile(file, out, static_cast<DWORD>(count), &got, nullptr) && got == count;
++
++done:
++    CloseHandle(file);
++    return ok;
++}
++
++HRESULT CallNativeD3D12CreateDevice(HMODULE module, PFN_D3D12CreateDevice entry, IUnknown* adapter,
++                                    D3D_FEATURE_LEVEL featureLevel, REFIID riid, void** device)
++{
++    if (entry == nullptr)
++        return E_POINTER;
++
++    static SRWLOCK patchLock = SRWLOCK_INIT;
++    AcquireSRWLockExclusive(&patchLock);
++
++    BYTE current[5] = {};
++    BYTE original[5] = {};
++    memcpy(current, reinterpret_cast<const void*>(entry), sizeof(current));
++    const bool reshadeJump = current[0] == 0xE9 &&
++                             ReadOnDiskBytesAtRva(module, reinterpret_cast<const BYTE*>(entry), original,
++                                                  sizeof(original)) &&
++                             original[0] != 0xE9;
++
++    DWORD exceptionCode = 0;
++    if (!reshadeJump)
++    {
++        const HRESULT result = SafeCreateDevice(entry, adapter, featureLevel, riid, device, &exceptionCode);
++        ReleaseSRWLockExclusive(&patchLock);
++        if (exceptionCode != 0)
++            LOG_ERROR("D3D12CreateDevice raised exception 0x{:X}", exceptionCode);
++        return result;
++    }
++
++    DWORD oldProtection = 0;
++    if (!VirtualProtect(reinterpret_cast<void*>(entry), sizeof(original), PAGE_EXECUTE_READWRITE, &oldProtection))
++    {
++        const DWORD error = GetLastError();
++        ReleaseSRWLockExclusive(&patchLock);
++        LOG_ERROR("Could not bypass ReShade D3D12CreateDevice hook, error {}", error);
++        return HRESULT_FROM_WIN32(error);
++    }
++
++    memcpy(reinterpret_cast<void*>(entry), original, sizeof(original));
++    FlushInstructionCache(GetCurrentProcess(), reinterpret_cast<const void*>(entry), sizeof(original));
++    LOG_INFO("Temporarily bypassing ReShade D3D12CreateDevice hook for private DLSS-on-DX12 device");
++    const HRESULT result = SafeCreateDevice(entry, adapter, featureLevel, riid, device, &exceptionCode);
++
++    memcpy(reinterpret_cast<void*>(entry), current, sizeof(current));
++    FlushInstructionCache(GetCurrentProcess(), reinterpret_cast<const void*>(entry), sizeof(current));
++    DWORD ignored = 0;
++    VirtualProtect(reinterpret_cast<void*>(entry), sizeof(current), oldProtection, &ignored);
++    ReleaseSRWLockExclusive(&patchLock);
++
++    if (exceptionCode != 0)
++        LOG_ERROR("Native D3D12CreateDevice raised exception 0x{:X}", exceptionCode);
++    return result;
++}
++
++const GUID kReShadeUnwrappedObject =
++    { 0x7f2c9a11, 0x3b4e, 0x4d6a, { 0x81, 0x2f, 0x5e, 0x9c, 0xd3, 0x7a, 0x1b, 0x42 } };
++
++IDXGIAdapter* UnwrapReShadeAdapter(IDXGIAdapter* adapter)
++{
++    if (adapter == nullptr)
++        return nullptr;
++
++    IUnknown* nativeUnknown = nullptr;
++    const HRESULT result =
++        adapter->QueryInterface(kReShadeUnwrappedObject, reinterpret_cast<void**>(&nativeUnknown));
++    if (FAILED(result) || nativeUnknown == nullptr)
++        return adapter;
++
++    IDXGIAdapter* nativeAdapter = nullptr;
++    const HRESULT queryResult = nativeUnknown->QueryInterface(IID_PPV_ARGS(&nativeAdapter));
++    nativeUnknown->Release();
++    if (FAILED(queryResult) || nativeAdapter == nullptr)
++        return adapter;
++
++    LOG_INFO("Unwrapped ReShade DXGI adapter for private DLSS-on-DX12 device");
++    return nativeAdapter;
++}
++} // namespace
++
+ HRESULT CreateD3D12DeviceOnAdapter(IDXGIAdapter* adapter, D3D_FEATURE_LEVEL featureLevel, ID3D12Device** device)
+ {
+     if (device == nullptr)
+@@ -12,18 +174,29 @@ HRESULT CreateD3D12DeviceOnAdapter(IDXGIAdapter* adapter, D3D_FEATURE_LEVEL feat
+
+     *device = nullptr;
+
+-    if (D3d12Proxy::Module() == nullptr)
+-        return D3D12CreateDevice(adapter, featureLevel, IID_PPV_ARGS(device));
+-
+-    return D3d12Proxy::D3D12CreateDevice_()(adapter, featureLevel, IID_PPV_ARGS(device));
++    const HMODULE module = D3d12Proxy::Module();
++    const PFN_D3D12CreateDevice entry =
++        module == nullptr ? D3D12CreateDevice : D3d12Proxy::D3D12CreateDevice_();
++    IDXGIAdapter* nativeAdapter = UnwrapReShadeAdapter(adapter);
++    const HRESULT result = CallNativeD3D12CreateDevice(module, entry, nativeAdapter, featureLevel,
++                                                        __uuidof(ID3D12Device),
++                                                        reinterpret_cast<void**>(device));
++    if (nativeAdapter != nullptr && nativeAdapter != adapter)
++        nativeAdapter->Release();
++    return result;
+ }
+
+ HRESULT TestD3D12DeviceOnAdapter(IDXGIAdapter* adapter, D3D_FEATURE_LEVEL featureLevel)
+ {
+-    if (D3d12Proxy::Module() == nullptr)
+-        return D3D12CreateDevice(adapter, featureLevel, _uuidof(ID3D12Device), nullptr);
+-
+-    return D3d12Proxy::D3D12CreateDevice_()(adapter, featureLevel, _uuidof(ID3D12Device), nullptr);
++    const HMODULE module = D3d12Proxy::Module();
++    const PFN_D3D12CreateDevice entry =
++        module == nullptr ? D3D12CreateDevice : D3d12Proxy::D3D12CreateDevice_();
++    IDXGIAdapter* nativeAdapter = UnwrapReShadeAdapter(adapter);
++    const HRESULT result =
++        CallNativeD3D12CreateDevice(module, entry, nativeAdapter, featureLevel, _uuidof(ID3D12Device), nullptr);
++    if (nativeAdapter != nullptr && nativeAdapter != adapter)
++        nativeAdapter->Release();
++    return result;
+ }
+
+ void WithDx12::UpdateStateObjects()
+diff --git a/OptiScaler/wrapped/wrapped_swapchain.cpp b/OptiScaler/wrapped/wrapped_swapchain.cpp
+index 718c468e..e02957c2 100644
+--- a/OptiScaler/wrapped/wrapped_swapchain.cpp
++++ b/OptiScaler/wrapped/wrapped_swapchain.cpp
+@@ -254,7 +254,9 @@ static HRESULT LocalPresent(IDXGISwapChain* pSwapChain, UINT SyncInterval, UINT
+                 if (upscalerTimeOpt = currentFeature->ReadUpscalerTime(cq); upscalerTimeOpt.has_value())
+                     currentFeature->ReadDetailedGpuTimes(cq, State::Instance().detailedGpuTimes);
+             }
+-            else if (device != nullptr)
++            // A private/bridged D3D12 feature can be process-wide current while
++            // this swap chain is D3D11. Never pass a D3D11 context to it.
++            else if (device != nullptr && currentFeature->Api() == API::DX11)
+             {
+                 ID3D11DeviceContext* context = nullptr;
+                 device->GetImmediateContext(&context);
+@@ -264,7 +266,8 @@ static HRESULT LocalPresent(IDXGISwapChain* pSwapChain, UINT SyncInterval, UINT
+
+                 context->Release();
+             }
+-            if (State::Instance().swapchainInteropApi == SwapchainInteropApi::Dx11wDx12 &&
++            if (currentFeature->Api() == API::DX11 &&
++                State::Instance().swapchainInteropApi == SwapchainInteropApi::Dx11wDx12 &&
+                 State::Instance().currentD3D11Device != nullptr)
+             {
+                 ID3D11DeviceContext* context = nullptr;

@@ -1,0 +1,56 @@
+DLSS5_GI_Ready v1.2 来源与修改说明
+====================================
+
+本包是第三方实验性整合，不是 NVIDIA、HoYoverse、ReShade 或各上游项目的
+官方产品。使用前请自行评估账号、驱动、游戏更新和预览运行时带来的风险。
+
+1. 前置 NR 超分插件
+
+nr-before-sr.zh-CN.addon64 与 nrchain_nvngx.dll 来自用户提供的压缩包：
+“B站野生的装机宅 DLSS5-AI渲染超分版-RTX50.zip”。插件界面与安装说明将
+其署名为 Bilibili UP 主“野生的装机宅”。本项目未修改这两个二进制文件，
+也不主张其源码或著作权。
+
+本项目对该部分仅做了以下集成修改：
+- 将 nr_before_sr.ini 的默认 Mode 从 1 改为 2，使顺序由“先超分后 NR”改为
+  “低分辨率 NR -> 原 DLSS 超分”；
+- 调整 ReShade Add-on 的早期加载、OptiScaler 配置、启动顺序和一键脚本；
+- 使用带 DLSS-on-DX12/pre-NR 兼容修复的 OptiScaler 构建；
+- 在无 GIMI 的 dlss_12 路径延迟原生 D3D11 NGX 初始化，改用 OptiScaler 自有
+  参数表把 D3D12 颜色、深度、运动向量和输出资源交给前置 NR 与原 DLSS；
+- 创建私有 DLSS-on-DX12 设备时临时绕过 ReShade 的 D3D12CreateDevice hook，
+  并解包 ReShade adapter proxy；只修改游戏进程内 hook，不修改系统 DLL；
+- 禁用 OptiScaler 内置后置 NR，避免同一帧重复执行 Neural Rendering。
+
+原插件说明还注明：其 HDR 模型画面合成方法派生自 clshortfuse 的 RenoDX
+DLSS 5 Neural Rendering add-on（MIT）。完整第三方声明见：
+payload\ReShade\reshade-shaders\Addons\pre-nr\THIRD_PARTY_NOTICES.txt
+
+2. 其他上游项目
+
+- Genshin FSR Bridge: https://github.com/AizawaHikaru233/genshin_fsr_brigde
+- OptiScaler DLSSNR fork: https://github.com/Dagherbou/OptiScaler_DLSSNR
+- OptiScaler: https://github.com/optiscaler/OptiScaler
+- ReShade: https://reshade.me/
+- Genshin FPS Unlock: https://github.com/34736384/genshin-fps-unlock
+- RenoDX: https://github.com/clshortfuse/renodx
+
+3. 关键文件 SHA-256
+
+nr-before-sr.zh-CN.addon64
+522D979CBFF335710F362B9FC2F330988673D7F8C7A1A2D93DA9980EC8DDA695
+
+nrchain_nvngx.dll
+DB26E486592B252072BA5734FC2B27412863B8526826225640C837D4B4D11B60
+
+nvngx_dlssnr.dll（RTX 50 测试运行时，不提交到 GitHub）
+E16BCF15E16E13F527491CDF7845B2FE6521A738D8F7C9C721866A8496E1FC8E
+
+OptiScaler.dll（本包使用的兼容构建）
+38FA288ABC16EE8E4FE1A1992E731ED7FAAB167FE09C41C93D0D8F01D8D110CF
+
+4. 适用范围
+
+当前完整包按 RTX 50 系和 Windows 11 24H2/较新 NVIDIA 驱动测试。DLSS NR
+是预览/非公开接口，游戏、驱动或模型更新后可能失效。RTX 40 所需运行时与
+本包默认文件不同，未经重新验证不要直接替换。

@@ -1,12 +1,23 @@
-This repository is an integration/tutorial project. It includes source snapshots and
-small binaries for the listed open-source projects. See each source directory for
-the original license and upstream URL.
+This repository is an experimental integration and tutorial project. It is not an
+official NVIDIA, HoYoverse, ReShade, OptiScaler, RenoDX, or Bilibili release.
 
-The repository does not redistribute NVIDIA DLSS model/runtime DLLs, ReShade runtime
-binaries, OptiScaler binaries, or the RenoDX DLSS5 add-on. Obtain those components
-from their respective authors or official distribution channels.
+The pre-NR add-on files nr-before-sr.zh-CN.addon64 and nrchain_nvngx.dll were
+supplied in “B站野生的装机宅 DLSS5-AI渲染超分版-RTX50.zip”, credited by the archive
+and UI to Bilibili creator “野生的装机宅”. Those two binaries are unmodified here.
+This project changes the Mode 1 configuration to Mode 2 and modifies the
+surrounding OptiScaler source, ReShade/OptiScaler configuration, and launcher.
+
+The add-on's bundled notice says its HDR composition method is derived from
+clshortfuse's RenoDX DLSS 5 Neural Rendering add-on under MIT. See
+release/pre-nr/THIRD_PARTY_NOTICES.txt for the preserved notice.
+
+Large NVIDIA runtimes, ReShade runtime and built OptiScaler binary are excluded
+from Git. See docs/REDISTRIBUTION.md and each source directory for licenses.
 
 Upstream projects:
-- https://github.com/NIGos/dlss5-dx11-bridge (MIT)
 - https://github.com/AizawaHikaru233/genshin_fsr_brigde (GPL-3.0)
+- https://github.com/Dagherbou/OptiScaler_DLSSNR
+- https://github.com/optiscaler/OptiScaler
 - https://github.com/34736384/genshin-fps-unlock (MIT)
+- https://github.com/clshortfuse/renodx (MIT)
+- https://reshade.me/
