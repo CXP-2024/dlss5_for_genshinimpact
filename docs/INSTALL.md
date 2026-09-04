@@ -2,12 +2,12 @@
 
 ## 普通用户
 
-1. 从 README 的 v1.2 网盘链接下载完整 `DLSS5_GI_Ready_v1.2_PreNR_RTX50_20260904.zip`。链接待维护者上传后补充。
-2. 解压到固定目录，建议使用英文路径。
+1. 从 README 的 v1.2 网盘链接下载完整 `DLSS5_GI_Ready_v1.2_PreNR_RTX50_20260904.7z`。链接待维护者上传后补充。
+2. 使用密码 `yuanshenqidong` 解压到固定目录，建议使用英文路径。压缩包已加密文件名，未输入正确密码不能查看目录结构。
 3. 双击 `启动_DLSS5.bat`，第一次选择 `YuanShen.exe` 或 `GenshinImpact.exe`。
 4. 游戏内选择 FSR2 抗锯齿；渲染倍率决定 NR/DLSS 输入分辨率。
 
-完整 ZIP 已含 ReShade、OptiScaler 兼容构建、DX11 FSR Bridge、前置 NR 插件、DLSS/DLSSNR runtime 和 FPS Unlocker。无需提前安装 GIMI 或任一上述组件。
+完整 7z 已含 ReShade、OptiScaler 兼容构建、DX11 FSR Bridge、前置 NR 插件、DLSS/DLSSNR runtime 和 FPS Unlocker。无需提前安装 GIMI 或任一上述组件。
 
 GitHub 仓库不是可直接运行的一键包：大文件和受限 runtime 不在 Git 历史中。
 

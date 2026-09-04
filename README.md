@@ -10,16 +10,17 @@
 
 - Google Drive：待补充
 - 百度网盘：待补充
-- 文件名：`DLSS5_GI_Ready_v1.2_PreNR_RTX50_20260904.zip`
-- 文件大小：`231,988,270 bytes`（约 221.2 MiB）
-- SHA-256：`E1AF7783CE4A65A148633BAFE902E447D91DBE7C0660F1736320B638379D8FDE`
-- ZIP：标准 ZIP，无解压密码
+- 文件名：`DLSS5_GI_Ready_v1.2_PreNR_RTX50_20260904.7z`
+- 文件大小：`166,978,690 bytes`（约 159.2 MiB）
+- SHA-256：`BB0EF3E89BF37BC018DC6CA872590913AECE8FF37A672B84B76DC72EB4014F1F`
+- 解压密码：`yuanshenqidong`
+- 格式：7z AES 加密，并启用文件名加密；密码错误时无法查看目录结构
 
 GitHub 仓库只含源码、补丁、配置和可提交的小文件。由于体积与分发边界，直接下载仓库不能代替完整一键包；`nvngx_dlssnr.dll`、`nvngx_dlss.dll`、ReShade 和构建后的 OptiScaler 等运行文件不会提交到 GitHub。
 
 ## 使用方法
 
-1. 解压完整 v1.2 ZIP 到固定目录，建议使用英文路径。
+1. 用密码 `yuanshenqidong` 解压完整 v1.2 7z 到固定目录，建议使用英文路径。
 2. 双击 `启动_DLSS5.bat`。
 3. 第一次选择 `YuanShen.exe` 或 `GenshinImpact.exe`；路径会保存，之后直接双击即可。
 4. 游戏内抗锯齿选择 **FSR2**，关闭垂直同步；渲染精度就是 NR 与 DLSS 的输入倍率。

@@ -16,4 +16,4 @@
 
 本项目修改的是：`nr_before_sr.ini` 的 Mode 1→2、OptiScaler 源码补丁、ReShade/OptiScaler 配置与一键启动脚本。原插件声明其 HDR 合成方法派生自 clshortfuse/RenoDX（MIT），声明副本在 `release/pre-nr/THIRD_PARTY_NOTICES.txt`。
 
-`tools/Build-PortablePackage.ps1` 从维护者本机已取得的文件生成完整 ZIP，ZIP 本身不进入 Git 历史。上传网盘前应再次核对各组件许可、作者授权、来源和哈希。
+`tools/Build-PortablePackage.ps1` 从维护者本机已取得的文件生成 AES 加密并隐藏文件名的完整 7z，7z 本身不进入 Git 历史。上传网盘前应再次核对各组件许可、作者授权、来源和哈希。

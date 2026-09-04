@@ -2,7 +2,9 @@ param(
     [Parameter(Mandatory = $true)][string]$RuntimeRoot,
     [Parameter(Mandatory = $true)][string]$OptiScalerRoot,
     [Parameter(Mandatory = $true)][string]$DlssNrRuntimePath,
-    [Parameter(Mandatory = $true)][string]$OutputDirectory
+    [Parameter(Mandatory = $true)][string]$OutputDirectory,
+    [string]$ArchivePassword = 'yuanshenqidong',
+    [string]$SevenZipPath = 'C:\Program Files\7-Zip\7z.exe'
 )
 
 Set-StrictMode -Version Latest
@@ -12,9 +14,10 @@ $repo = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 $runtime = [IO.Path]::GetFullPath($RuntimeRoot)
 $optiSource = [IO.Path]::GetFullPath($OptiScalerRoot)
 $dlssNrRuntime = [IO.Path]::GetFullPath($DlssNrRuntimePath)
+$sevenZip = [IO.Path]::GetFullPath($SevenZipPath)
 $out = [IO.Path]::GetFullPath($OutputDirectory)
 $staging = Join-Path $out 'DLSS5_GI_Ready'
-$zip = Join-Path $out 'DLSS5_GI_Ready_v1.2_PreNR_RTX50.zip'
+$archive = Join-Path $out 'DLSS5_GI_Ready_v1.2_PreNR_RTX50_20260904.7z'
 
 $expectedHashes = @{
     Bridge = '1AB7FBD90B69D8F57851FDFC039AA3890AEE46AEA2DCB4DB72C8049282140310'
@@ -63,6 +66,8 @@ function Copy-RelativeTree {
 Require-Directory $runtime
 Require-Directory $optiSource
 Require-File $dlssNrRuntime
+Require-File $sevenZip
+if ([string]::IsNullOrWhiteSpace($ArchivePassword)) { throw '7z 密码不能为空' }
 New-Item -ItemType Directory -Force -Path $out | Out-Null
 
 $resolvedOut = (Resolve-Path -LiteralPath $out).Path.TrimEnd('\')
@@ -72,7 +77,7 @@ if (-not $resolvedStaging.StartsWith($resolvedOut + '\', [StringComparison]::Ord
 }
 
 if (Test-Path -LiteralPath $staging) { Remove-Item -LiteralPath $staging -Recurse -Force }
-if (Test-Path -LiteralPath $zip) { Remove-Item -LiteralPath $zip -Force }
+if (Test-Path -LiteralPath $archive) { Remove-Item -LiteralPath $archive -Force }
 New-Item -ItemType Directory -Force -Path $staging | Out-Null
 
 $bridgeDll = Join-Path $repo 'release\configs\Dx11FsrBridge.dll'
@@ -151,6 +156,14 @@ $hashLines = foreach ($file in Get-ChildItem -LiteralPath $staging -Recurse -Fil
 }
 $hashLines | Set-Content -LiteralPath (Join-Path $staging 'SHA256SUMS.txt') -Encoding UTF8
 
-Compress-Archive -LiteralPath $staging -DestinationPath $zip -CompressionLevel Optimal
+$passwordArgument = "-p$ArchivePassword"
+Push-Location -LiteralPath $out
+try {
+    & $sevenZip a -t7z $archive '.\DLSS5_GI_Ready' $passwordArgument -mhe=on -mx=9 -mmt=on
+    if ($LASTEXITCODE -ne 0) { throw "7z 创建失败，退出码：$LASTEXITCODE" }
+} finally {
+    Pop-Location
+}
+
 Write-Host "已生成目录：$staging"
-Write-Host "已生成压缩包：$zip"
+Write-Host "已生成 AES 加密且隐藏文件名的 7z：$archive"

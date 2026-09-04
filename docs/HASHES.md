@@ -1,6 +1,6 @@
 # v1.2 文件哈希
 
-以下是本次 v1.2 RTX 50 构建固定校验值。仓库内小文件另见各 `release/*/SHA256SUMS.txt`，完整 ZIP 内含逐文件 `SHA256SUMS.txt`。
+以下是本次 v1.2 RTX 50 构建固定校验值。仓库内小文件另见各 `release/*/SHA256SUMS.txt`，完整 7z 内含逐文件 `SHA256SUMS.txt`。
 
 | 文件 | 大小（bytes） | SHA-256 | 是否修改 |
 | --- | ---: | --- | --- |
@@ -11,4 +11,4 @@
 | `Dx11FsrBridge.dll` | 由仓库文件为准 | `1AB7FBD90B69D8F57851FDFC039AA3890AEE46AEA2DCB4DB72C8049282140310` | v1.2 沿用 v1.1 已验证构建 |
 | `ReShade64.dll` | 由完整包为准 | `0CEE63F9C9F13F3AC909C5B4903F4DBB4B719A7AB3B4F13B0DEAF83C814B94F7` | 否 |
 | `OptiScaler.dll` | 25,863,680 | `38FA288ABC16EE8E4FE1A1992E731ED7FAAB167FE09C41C93D0D8F01D8D110CF` | 是，按 `src/patches` 构建 |
-| `DLSS5_GI_Ready_v1.2_PreNR_RTX50_20260904.zip` | 231,988,270 | `E1AF7783CE4A65A148633BAFE902E447D91DBE7C0660F1736320B638379D8FDE` | 正式发布包；逐文件清单全部通过 |
+| `DLSS5_GI_Ready_v1.2_PreNR_RTX50_20260904.7z` | 166,978,690 | `BB0EF3E89BF37BC018DC6CA872590913AECE8FF37A672B84B76DC72EB4014F1F` | 正式发布包；AES 内容/文件名加密；密码 `yuanshenqidong`；逐文件清单全部通过 |
