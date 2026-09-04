@@ -2,7 +2,7 @@
 
 ## 普通用户
 
-1. 从 README 的 v1.2 网盘链接下载完整 `DLSS5_GI_Ready_v1.2_PreNR_RTX50_20260904.7z`。链接待维护者上传后补充。
+1. 从 README 的 Google Drive 或百度网盘链接下载完整 `DLSS5_GI_Ready_v1.2_PreNR_RTX50_20260904.7z`。
 2. 使用密码 `yuanshenqidong` 解压到固定目录，建议使用英文路径。压缩包已加密文件名，未输入正确密码不能查看目录结构。
 3. 双击 `启动_DLSS5.bat`，第一次选择 `YuanShen.exe` 或 `GenshinImpact.exe`。
 4. 游戏内选择 FSR2 抗锯齿；渲染倍率决定 NR/DLSS 输入分辨率。
