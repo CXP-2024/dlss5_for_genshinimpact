@@ -5,7 +5,7 @@
 1. 将整个文件夹放在任意英文路径。
 2. 通常只双击“启动_DLSS5.bat”，脚本会自动选择 RTX 30 或 RTX 50 Profile。
 3. 第一次在文件选择框中选择 YuanShen.exe，之后再次双击即可。
-4. 自动识别失败时，可改用“启动_DLSS5_RTX30.bat”或“启动_DLSS5_RTX50.bat”。
+4. 自动识别失败或检测到未验证的显卡时，启动脚本会提示选择 RTX 30 或 RTX 50 Profile。
 
 不要打开 payload\\_internal 里的文件。
 

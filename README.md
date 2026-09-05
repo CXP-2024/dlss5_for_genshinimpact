@@ -48,13 +48,13 @@ v1.1 已修复此前 RenoDX DLSS5 插件的显存泄漏问题，并更新 DLSS5/
 
 v1.2 默认把 DLSS5 Neural Rendering 放到低分辨率阶段，然后把 NR 结果交给原始 DLSS Super Resolution 放大。实测链路为 `960x540 NR -> 960x540 -> DLSS -> 1920x1080`，Feature 18 连续成功 5400 帧，测试段约 160 FPS。兼容更新同时恢复了插件原有的 Mode 1：`低分辨率输入 -> DLSS SR -> 输出分辨率 NR`。
 
-最新双 Profile 一键包会由 `启动_DLSS5.bat` 自动识别 RTX 30/RTX 50；识别失败时可使用随包的两个显式入口。启动器不再重写 `Enabled` 或 `Mode`，因此插件界面的模式选择会跨重启保留。详细原因和源码审核见 [`docs/RTX30_DUAL_MODE_FIX.md`](docs/RTX30_DUAL_MODE_FIX.md)。
+最新双 Profile 一键包只保留 `启动_DLSS5.bat`：脚本会自动识别 RTX 30/RTX 50，识别失败或检测到未验证的显卡时会直接提示选择 Profile。启动器不再重写 `Enabled` 或 `Mode`，因此插件界面的模式选择会跨重启保留。详细原因和源码审核见 [`docs/RTX30_DUAL_MODE_FIX.md`](docs/RTX30_DUAL_MODE_FIX.md)。
 
 最新本地验收包（云盘链接待更新）：
 
 - 文件名：`DLSS5_GI_Ready_v1.2_PreNR_RTX30_RTX50_20260905.7z`
-- 文件大小：`221,201,554 bytes`（约 211 MiB）
-- SHA-256：`32012DDF73AA90B0387A388088E00C5F3738662B67569F7FFB1FD64A51B07BBB`
+- 文件大小：`221,201,410 bytes`（约 211 MiB）
+- SHA-256：`95A87BC1B5C981A7AFA63E9E18BB68410B1697D3F20108418AC9B7A4050388CF`
 - 7z 解压密码：`yuanshenqidong`；已启用 AES 内容与文件名加密
 
 下面两个链接仍是 2026-09-04 的 RTX 50 单 Profile 旧包，尚不包含本次 RTX 30/双模式兼容更新：

@@ -119,8 +119,6 @@ Assert-Sha256Any $optiDll $expectedHashes.OptiScaler 'OptiScaler.dll'
 Assert-Sha256 $reshadeDll $expectedHashes.ReShade 'ReShade64.dll'
 
 Copy-File (Join-Path $repo 'release\portable-template\启动_DLSS5.bat') '启动_DLSS5.bat'
-Copy-File (Join-Path $repo 'release\portable-template\启动_DLSS5_RTX30.bat') '启动_DLSS5_RTX30.bat'
-Copy-File (Join-Path $repo 'release\portable-template\启动_DLSS5_RTX50.bat') '启动_DLSS5_RTX50.bat'
 Copy-File (Join-Path $repo 'release\portable-template\README.txt') 'README.txt'
 Copy-File (Join-Path $repo 'release\portable-template\ATTRIBUTION.txt') 'ATTRIBUTION.txt'
 Copy-File (Join-Path $repo 'release\portable-template\configure_and_start.ps1') 'payload\_internal\configure_and_start.ps1'
