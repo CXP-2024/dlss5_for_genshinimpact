@@ -1,4 +1,4 @@
-原神 DLSS5 v1.2 双模式一键包（RTX 30 / RTX 50）
+原神 DLSS5 v1.3 后端 NR 兼容双模式一键包（RTX 30 / RTX 50）
 
 发布压缩包为文件名加密的 7z，解压密码：yuanshenqidong
 

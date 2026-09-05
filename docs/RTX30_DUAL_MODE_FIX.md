@@ -1,9 +1,9 @@
-# RTX 30 兼容与双模式恢复说明
+# v1.3 RTX 30 后端兼容与双模式恢复说明
 
 ## 审核结论
 
-外部修复包 `DLSS5_GI_Ready_v1.2_PreNR_fixRTX30.zip` 不是只替换了 NR 模型。
-相对本仓库原 v1.2 补丁，它只继续修改三个 OptiScaler 源文件，但解决了两个不同问题：
+v1.3 使用的外部修复来源包 `DLSS5_GI_Ready_v1.2_PreNR_fixRTX30.zip` 不是只替换了 NR 模型。
+相对本仓库原 v1.2 实验补丁，它只继续修改三个 OptiScaler 源文件，但解决了两个不同问题：
 
 1. RTX 30 的 NGX 驱动路径不能安全使用原 v1.2 的“延迟 D3D11 初始化 + 自定义参数表”。
 2. 原神不同路径出现的 R8/R10/R11 packed/typeless 输出不能直接承担两种 NR/SR 排列所需的 FP16 中间结果。
@@ -65,8 +65,23 @@ Mode=2
 不再修改这两个值：第一次使用 Mode 2 默认值，之后完整保留插件界面的选择。
 
 主入口会自动识别 RTX 30/RTX 50 并选择成套的 AddonPath、`nrchain_nvngx.dll` 和
-`nvngx_dlssnr.dll`；两个显式 BAT 仅作为自动识别失败时的兜底。RTX 40 尚未建立经过实机
-验证的一键 Profile，不在自动选择范围内。
+`nvngx_dlssnr.dll`。识别失败或检测到未验证显卡时，同一个 `启动_DLSS5.bat`
+会提示选择 Profile；RTX 40 尚未建立经过实机验证的一键 Profile，不在自动选择范围内。
+
+## RTX30 生命周期门禁与稳定 Add-on
+
+修复实验中使用过的新版 Add-on 除了检查 Feature 18 是否成功，还要求通过 ReShade
+观察私有 queue 的 `ExecuteCommandLists`、Signal 和 fence retirement。由于私有
+D3D12 device 为避免 ReShade 二次包装而绕过其创建 detour，这些提交事件不会完整进入
+ReShade 的观察路径。新版 Add-on 因而持续 fail-closed，日志表现为
+`transfer-submitted=0` / `lifecycle-bypass` 增长，画面在前置 NR 与原始 SR
+之间长期闪烁。
+
+v1.3 的 RTX30 Profile 改用此前验证过的稳定旧版
+`nr-before-sr.zh-CN.addon64`，SHA-256 为
+`522D979CBFF335710F362B9FC2F330988673D7F8C7A1A2D93DA9980EC8DDA695`。
+它仍创建并连续执行 Feature 18，只是不采用上述与私有 queue 观察路径不兼容的门禁。
+因此这不是关闭 NR、退回普通 DLSS 或改回 v1.1 后置链路。
 
 ## 源码与归属
 

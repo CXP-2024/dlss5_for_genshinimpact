@@ -1,4 +1,4 @@
-DLSS5_GI_Ready v1.2 来源与修改说明
+DLSS5_GI_Ready v1.3 来源与修改说明
 ====================================
 
 本包是第三方实验性整合，不是 NVIDIA、HoYoverse、ReShade 或各上游项目的
@@ -30,6 +30,11 @@ RTX 30 兼容贡献
 RTX 30 Profile、OptiScaler 增量修改和兼容说明来自用户提供的
 “DLSS5_GI_Ready_v1.2_PreNR_fixRTX30.zip”，其文档署名“华晓熊”；文档记录
 RTX 3090 / NVIDIA 581.57 验证。本项目在纳入前独立比较了源码差异并重新构建。
+
+RTX 30 最终使用与原装机宅包相同、SHA-256 为 522D979C...DDA695 的稳定旧版
+nr-before-sr.zh-CN.addon64。实验新版的 lifecycle 门禁无法从 ReShade 观察到私有
+D3D12 queue 的完整 Execute/Signal/fence retirement，会持续 fail-closed 并造成
+NR/原始 SR 画面交替；稳定版仍连续执行 Feature 18，只移除这项不兼容门禁策略。
 
 随后在国服 YuanShen/RTX 5080 运行验证中发现剩余边界：外部补丁只在
 R8G8B8A8_TYPELESS 时启用 FP16 输出载体，而实机输出是 R10G10B10A2_UNORM

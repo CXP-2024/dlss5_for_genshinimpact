@@ -4,7 +4,7 @@ param(
     [Parameter(Mandatory = $true)][Alias('DlssNrRuntimePath')][string]$DlssNrRuntime50Path,
     [Parameter(Mandatory = $true)][string]$DlssNrRuntime30Path,
     [Parameter(Mandatory = $true)][string]$OutputDirectory,
-    [string]$ArchiveName = 'DLSS5_GI_Ready_v1.2_PreNR_RTX30_RTX50_20260905.7z',
+    [string]$ArchiveName = 'DLSS5_GI_Ready_v1.3_NRBackend_RTX30_RTX50_20260905.7z',
     [string]$ArchivePassword = 'yuanshenqidong',
     [string]$SevenZipPath = 'C:\Program Files\7-Zip\7z.exe'
 )
@@ -167,7 +167,7 @@ Copy-RelativeTree (Join-Path $optiSource 'D3D12_Optiscaler') 'payload\OptiScaler
 Copy-RelativeTree (Join-Path $optiSource 'Licenses') 'payload\OptiScaler\Licenses'
 
 $manifest = [ordered]@{
-    Package = 'v1.2'
+    Package = 'v1.3'
     Profiles = @('RTX 30 RankFTW SF compatibility runtime', 'RTX 50 NVIDIA signed preview runtime')
     GIMI = 'not required and not included'
     ReShade = '6.8.0 Add-on; unmodified v1.1 runtime'

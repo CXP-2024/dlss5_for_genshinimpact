@@ -1,6 +1,6 @@
-# v1.2 双模式工作原理
+# v1.3 双模式工作原理
 
-v1.2 默认是无 GIMI 的“前置 NR 后超分”链路：
+v1.3 默认是无 GIMI 的“前置 NR 后超分”链路：
 
 ```text
 Genshin DX11 FSR2 inputs (low resolution)
@@ -27,13 +27,22 @@ DLSS Super Resolution，Feature 18 再在输出分辨率执行 NR，然后才回
 
 旧的无 GIMI 路径先初始化原生 D3D11 NGX，`GetCapabilityParameters` 因而返回 NVIDIA 的类型严格参数表。随后 DX11-on-12 桥虽然写入了 D3D12 资源，但前置插件无法按 D3D12 resource 槽读取，表现为 Feature 1 调用增加而 Feature 18 始终为 0。
 
-原 v1.2 用延迟 D3D11 初始化和 OptiScaler 自有参数表绕过了这个问题，但 RTX 30
+原 v1.2 实验版用延迟 D3D11 初始化和 OptiScaler 自有参数表绕过了这个问题，但 RTX 30
 驱动对 NGX 初始化顺序和参数对象的私有字段更严格。兼容更新改为提前完成原生 D3D11
 NGX 初始化，同时让 D3D11 Get/Capability/Allocate 返回原生 D3D12 NGX 参数对象；
 桥接同时写 typed `ID3D12Resource*` 与兼容 `void*` 槽，并通过匹配的 D3D12 API 销毁。
 
 每条 command list 还带有 queue-affinity 标记，并在 Reset 后重新写入，使 RTX 30
 Feature 18 能确认稳定的 device/queue/list 关系。
+
+## RTX30 Add-on 生命周期兼容
+
+RTX30 修复实验中使用过的新版 Add-on 会进一步要求观察私有 D3D12 queue 的提交和
+fence retirement。私有 device 为避免 ReShade 二次包装而绕过其创建 detour，ReShade
+因此无法观察完整的 Execute/Signal 事件；新版 Add-on 会持续 fail-closed，在前置 NR
+与原始 SR 间交替，表现为长期闪烁。v1.3 的 RTX30 Profile 使用哈希为
+`522D979CBFF335710F362B9FC2F330988673D7F8C7A1A2D93DA9980EC8DDA695`
+的稳定旧版 Add-on：保留 Feature 18 与前置 NR，只移除不兼容的生命周期门禁策略。
 
 ## FP16 输出载体与 Mode 1 恢复
 
