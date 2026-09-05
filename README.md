@@ -29,6 +29,8 @@ HDR 也已包含并默认启用：启动器会设置原神的 HDR 开关，包�
 
 v1.1 和 v1.3 是当前并列提供的两个正式版本，请按需要选择并放在相互独立的文件夹内，不要把两个版本的 `payload` 或 Add-ons 相互覆盖。v1.2、v1.0 作为历史版本保留在本文末尾。
 
+`如果v1.3用不了请换兼容性更强的v1.1, 新版bug太多`
+
 | 版本 | DLSS5 NR 的位置 | 适合人群 | 当前显卡范围 |
 | --- | --- | --- | --- |
 | v1.1 后置 NR 版 | 原始 DLSS 已经得到输出帧后，再在输出分辨率执行 NR；NR 本身不承担低分辨率超分 | 希望保留原来效果，或不需要“低分辨率 NR 后再超分”的用户 | RTX 50；RTX 40、30 按下文替换专用 NR 模型 |
@@ -41,8 +43,8 @@ v1.1 已修复此前 RenoDX DLSS5 插件的显存泄漏问题，并更新 DLSS5/
 [失败排查！！！一定要看！一定要看！一定要看！！！](#报错闪退-进不去原神-进去了画面未生效可能原因)
 
 - [Google Drive 下载](https://drive.google.com/file/d/17LIscmrEGhJrlWnOdZNlRBFJotdHaOLf/view?usp=sharing)（不限速）
+- [夸克网盘下载](https://pan.quark.cn/s/bb1555921fd2)（国内访问方便，建议使用 SVIP 下载）
 - [百度网盘下载](https://pan.baidu.com/s/1tlxdX8iLNN9gCvEd5j2soQ?pwd=y95x)（国内访问方便，建议使用 SVIP 下载）
-- [夸克网盘下载](https://pan.quark.cn/s/bb1555921fd2)
 
 百度网盘提取码：`y95x`；7z 解压密码：`yuanshenqidong`。
 
@@ -68,7 +70,9 @@ v1.3 是此前 v1.2 前置 NR 实验版完成 RTX30 后端兼容修复、双模�
 以下替换方法用于 v1.1。如果显卡是 RTX 40 或30 系列，请额外下载 RHI 提供的 RTX40或30 专用 `nvngx_dlssnr.dll`，不要直接使用 v1.1 完整包内的默认 NR 模型：
 
 - [Google Drive 下载](https://drive.google.com/file/d/1ijpMYWjmfPUvOvtoST1xHB73ZXPNlAyq/view?usp=sharing)
+- [夸克网盘下载](https://pan.quark.cn/s/550e3818cf1b)
 - [百度网盘下载](https://pan.baidu.com/s/1GSp99MEpuf7BaDbueYqmlA?pwd=ycsu)（提取码：`ycsu`）
+
 解压后，用其中的 `nvngx_dlssnr.dll` 替换：
 
 ```text
