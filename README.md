@@ -43,7 +43,6 @@ v1.1 已修复此前 RenoDX DLSS5 插件的显存泄漏问题，并更新 DLSS5/
 [失败排查！！！一定要看！一定要看！一定要看！！！](#报错闪退-进不去原神-进去了画面未生效可能原因)
 
 - [Google Drive 下载](https://drive.google.com/file/d/17LIscmrEGhJrlWnOdZNlRBFJotdHaOLf/view?usp=sharing)（不限速）
-- [夸克网盘下载](https://pan.quark.cn/s/bb1555921fd2)（国内访问方便，建议使用 SVIP 下载）
 - [百度网盘下载](https://pan.baidu.com/s/1tlxdX8iLNN9gCvEd5j2soQ?pwd=y95x)（国内访问方便，建议使用 SVIP 下载）
 
 百度网盘提取码：`y95x`；7z 解压密码：`yuanshenqidong`。
@@ -57,7 +56,7 @@ v1.3 是此前 v1.2 前置 NR 实验版完成 RTX30 后端兼容修复、双模�
 双 Profile 一键包只保留 `启动_DLSS5.bat`：脚本会自动识别 RTX 30/RTX 50，识别失败或检测到未验证的显卡时会直接提示选择 Profile。启动器不再重写 `Enabled` 或 `Mode`，因此插件界面的模式选择会跨重启保留。详细原因和源码审核见 [`docs/RTX30_DUAL_MODE_FIX.md`](docs/RTX30_DUAL_MODE_FIX.md)。
 
 - [Google Drive 下载](https://drive.google.com/file/d/1d-aaUEo_ftRpY7mFCO7zUTugBKg7pW-j/view?usp=sharing)（海外/不限速）
-- [夸克网盘下载](https://pan.quark.cn/s/f3e0fa0a9155)
+- [百度网盘下载](https://pan.baidu.com/s/1pj9v5YCUwGvtIGpaaXsIIA?pwd=c4mi)（提取码：`c4mi`）
 
 - 文件大小：`221,201,410 bytes`（约 211 MiB）
 - SHA-256：`95A87BC1B5C981A7AFA63E9E18BB68410B1697D3F20108418AC9B7A4050388CF`
@@ -88,6 +87,12 @@ DLSS5_GI_Ready\payload\ReShade\reshade-shaders\Addons\nvngx_dlssnr.dll
 如果启动时出现下图中的 `The client is damaged, please reinstall the client. Error Code: (2,0,4)`、`Illegal tool detected, please restart the machine. Error Code: (6,4,2502)`，或能够进入游戏但画面完全没有变化，请先不要反复覆盖安装。这些现象可能由旧注入组件残留、安全软件拦截、路径或权限问题、驱动/系统不符合要求，以及安装后尚未重启等因素引起，并不一定代表原神客户端本体损坏。
 
 ![客户端损坏与非法工具典型报错](docs/images/client-damaged-illegal-tool-errors.png)
+
+新增典型报错：`UnlockerStub.dll`“没有被指定在 Windows 上运行，或者它包含错误”，错误状态 `0xc0e90007`。
+
+![UnlockerStub.dll 无法运行，错误状态 0xc0e90007](docs/images/unlockerstub-bad-image-0xc0e90007.png)
+
+遇到 `0xc0e90007` 时，请删除当前解压目录，从本页链接重新下载对应版本的**完整压缩包**，确认下载完整后再用 7-Zip 解压到纯英文、无空格路径。随后检查 Windows 安全中心的“保护历史记录”，确认 `UnlockerStub.dll` 是否被隔离或拦截；只有在文件确实来自本页发布包时才允许或恢复。不要把其他版本的一键包、`unlockfps_nc.exe` 与 `UnlockerStub.dll` 混用；重新解压后仍报错，再重启系统并携带完整报错截图进群提问。
 
 请优先完整使用本页提供的一键包。除非你已经理解各组件的加载关系，并阅读了[一键包组件来源与替换说明](#一键包组件来源与替换说明)，否则不要自行混装或替换 ReShade、NR、DLSS、Add-on、OptiScaler 等组件。安装新版本前，请彻底清理以前安装的第三方注入文件，确保游戏目录处于干净状态，再按顺序完成下面八项排查。
 
