@@ -2,6 +2,7 @@
 
 ## 目录
 
+- [视频教程与效果展示](#视频教程与效果展示)
 - [v1.1 与 v1.3（按需选择）](#v11-与-v13按需选择)
 - [v1.1 后置 NR 版](#v11后置-nr-版有问题进q-1107530312-联系)
 - [v1.3 后端 NR 兼容双模式正式版](#v13后端-nr-兼容双模式正式版)
@@ -24,6 +25,13 @@
 两个完整包都已经包含各自运行所需组件，不需要提前安装 GIMI、ReShade、OptiScaler、DLSS DLL 或 FPS Unlocker。v1.1 包含原来的 DLSS5 bridge/RenoDX 后置 NR 链路；v1.3 使用前置 NR 插件与经过后端兼容修改的 OptiScaler，并保留输出分辨率后置 NR 模式。只需运行批处理文件，不需要打开 `.ps1`，也不需要改名 `dxgi.dll`/`d3d12.dll`。
 
 HDR 也已包含并默认启用：启动器会设置原神的 HDR 开关，包内带有 RenoDX/HDR 相关处理和 shader。要看到真实 HDR 输出，还需要在 Windows 和显示器上开启 HDR；ReShade shader 只是随包提供，不会自动启用每一个效果。
+
+## 视频教程与效果展示
+
+- [【原神 DLSS5 开启教程】](https://www.bilibili.com/video/BV1Qc4X6iEsc/)：用于了解一键包的安装、启动和 DLSS5 开启流程。
+- [【原神 不大改美术风格版】DLSS 5 ON/OFF 各场景对比效果演示（4K HDR）](https://www.bilibili.com/video/BV14Jtk6qEQ1)：展示 DLSS5 在原神不同场景中的实际效果，在尽量不破坏原有美术风格的前提下增强游戏的光影表现。
+
+如果这两个视频成功帮助了你，欢迎分别为视频一键三连；如果一键包好用，也欢迎给本 [GitHub 仓库点一个 Star](https://github.com/CXP-2024/dlss5_for_genshinimpact)。
 
 ## v1.1 与 v1.3（按需选择）
 
