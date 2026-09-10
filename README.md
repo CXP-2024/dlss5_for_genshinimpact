@@ -3,6 +3,7 @@
 ## 目录
 
 - [视频教程与效果展示](#视频教程与效果展示)
+- [Mod / GIMI 用户](#mod--gimi-用户)
 - [v1.1 与 v1.3（按需选择）](#v11-与-v13按需选择)
 - [v1.1 后置 NR 版](#v11后置-nr-版有问题进q-1107530312-联系)
 - [v1.3 后端 NR 兼容双模式正式版](#v13后端-nr-兼容双模式正式版)
@@ -25,6 +26,12 @@
 两个完整包都已经包含各自运行所需组件，不需要提前安装 GIMI、ReShade、OptiScaler、DLSS DLL 或 FPS Unlocker。v1.1 包含原来的 DLSS5 bridge/RenoDX 后置 NR 链路；v1.3 使用前置 NR 插件与经过后端兼容修改的 OptiScaler，并保留输出分辨率后置 NR 模式。只需运行批处理文件，不需要打开 `.ps1`，也不需要改名 `dxgi.dll`/`d3d12.dll`。
 
 HDR 也已包含并默认启用：启动器会设置原神的 HDR 开关，包内带有 RenoDX/HDR 相关处理和 shader。要看到真实 HDR 输出，还需要在 Windows 和显示器上开启 HDR；ReShade shader 只是随包提供，不会自动启用每一个效果。
+
+## Mod / GIMI 用户
+
+如果你还需要加载原神 Mod 或使用 3DMigoto/GIMI，请改用 [GIMI + ReShade + DLSS + DLSS5 集成版](https://github.com/CXP-2024/GIMI_reshade_dlss_integration)。该仓库提供针对 GIMI 注册、注入顺序和组件路径处理的一键启动方案。
+
+普通版与 GIMI 版请分别解压到独立文件夹，并严格按照各自 README 配置；不要把两个版本的启动器、DLL、`payload`、Profile 或 Add-ons 相互覆盖、混装。
 
 ## 视频教程与效果展示
 
