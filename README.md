@@ -75,10 +75,13 @@ v1.3 是此前 v1.2 前置 NR 实验版完成 RTX30 后端兼容修复、双模�
 
 - [Google Drive 下载](https://drive.google.com/file/d/1d-aaUEo_ftRpY7mFCO7zUTugBKg7pW-j/view?usp=sharing)（海外/不限速）
 - [百度网盘下载](https://pan.baidu.com/s/1pj9v5YCUwGvtIGpaaXsIIA?pwd=c4mi)（提取码：`c4mi`）
+- [夸克网盘下载：v1.3 NoStub 版](https://pan.quark.cn/s/dd7608e9787f)
 
-- 文件大小：`221,201,410 bytes`（约 211 MiB）
-- SHA-256：`95A87BC1B5C981A7AFA63E9E18BB68410B1697D3F20108418AC9B7A4050388CF`
+- Google Drive／百度原始完整包：`221,201,410 bytes`（约 211 MiB），SHA-256 `95A87BC1B5C981A7AFA63E9E18BB68410B1697D3F20108418AC9B7A4050388CF`
+- 夸克 NoStub 包：`DLSS5_GI_Ready_v1.3_NoStub_20260912.7z`，`285,103,923 bytes`（约 272 MiB），SHA-256 `B0EEDAF9E9005E6B14C04DEDEC6229A58B8CFD29E24421503F4CB8444DE88C03`
 - 7z 解压密码：`yuanshenqidong`；已启用 AES 内容与文件名加密
+
+夸克 NoStub 包为减少网盘错误隔离，**不包含** `UnlockerStub.dll`。请先从 [GitHub 单独下载 UnlockerStub.dll](https://github.com/CXP-2024/dlss5_for_genshinimpact/raw/refs/heads/main/release/fps-unlocker/UnlockerStub.dll)，放到解压目录根部，与 `启动_DLSS5.bat`、`unlockfps_nc.exe` 同级；缺少时启动器会显示下载地址并停止。
 
 不要把 v1.1 的 `dlss5-dx11-bridge`、RenoDX 后置 NR Add-on 或 RTX 40 模型直接覆盖到 v1.3 目录。RTX 30 Profile 使用无数字签名的 RankFTW 310.8.SF-v2 runtime；RTX 50 Profile 使用 NVIDIA 签名 runtime，两套 `nrchain/runtime` 必须成套保留。
 
