@@ -59,8 +59,11 @@ v1.1 已修复此前 RenoDX DLSS5 插件的显存泄漏问题，并更新 DLSS5/
 
 - [Google Drive 下载](https://drive.google.com/file/d/17LIscmrEGhJrlWnOdZNlRBFJotdHaOLf/view?usp=sharing)（不限速）
 - [百度网盘下载](https://pan.baidu.com/s/1tlxdX8iLNN9gCvEd5j2soQ?pwd=y95x)（国内访问方便，建议使用 SVIP 下载）
+- [夸克网盘下载：v1.1 帧率选择 NoStub 版](https://pan.quark.cn/s/a2f360b0f7c6)
 
 百度网盘提取码：`y95x`；7z 解压密码：`yuanshenqidong`。
+
+夸克提供的是 `DLSS5_GI_Ready_v1.1_FPS_Select_NoStub_20260911.7z`：启动时可以选择目标帧率，但为减少网盘错误隔离，压缩包**不包含** `UnlockerStub.dll`。请先从 [GitHub 单独下载 UnlockerStub.dll](https://github.com/CXP-2024/dlss5_for_genshinimpact/raw/refs/heads/main/release/fps-unlocker/UnlockerStub.dll)，放到解压目录根部，与 `启动_DLSS5.bat`、`unlockfps_nc.exe` 同级。NoStub 包 SHA-256：`BB9DCA2B22E5C18525ED57C860A11F212A5A5FED85B274D75896DB6476C4DD24`。
 
 ## v1.3：后端 NR 兼容双模式正式版
 
